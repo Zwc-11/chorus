@@ -1,0 +1,21 @@
+name: Chorus Regression Gate
+description: Run Chorus and fail when reliability regresses against a baseline.
+
+inputs:
+  task:
+    description: Task file or suite to run.
+    required: true
+  n:
+    description: Number of trajectories per task.
+    required: false
+    default: "12"
+
+runs:
+  using: composite
+  steps:
+    - name: Placeholder
+      shell: bash
+      run: |
+        echo "Chorus CI gate will run: chorus run --task '${{ inputs.task }}' --n '${{ inputs.n }}'"
+        echo "Regression comparison lands after Phase 2 metrics and Phase 5 CI work."
+

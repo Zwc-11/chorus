@@ -1,0 +1,4 @@
+task_id: demo.echo_uppercase
+prompt: hello chorus
+expected_output: HELLO CHORUS
+
