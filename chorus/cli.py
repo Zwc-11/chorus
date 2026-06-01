@@ -269,7 +269,7 @@ def gate(
     success_delta: Annotated[
         float, typer.Option(help="Shift applied to every task's base difficulty.")
     ] = 0.0,
-    error_rate: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.08,
+    error_rate: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.30,
     branch: Annotated[
         str | None, typer.Option(help="Baseline branch; auto-detected if unset.")
     ] = None,
