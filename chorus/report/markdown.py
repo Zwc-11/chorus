@@ -50,7 +50,8 @@ def render_run_report(result: RunResult) -> str:
         lines.extend(
             [
                 f"- judge resolved tier: `{result.judge_summary.get('resolved_tier')}`",
-                f"- judge cost ratio: `{result.judge_summary.get('cost_ratio', 0.0):.2f}`",
+                f"- judge cost ratio: `{result.judge_summary.get('cost_ratio', 0.0):.2f}`"
+                " (synthetic-validated; real accuracy-parity number lands in Phase 5)",
                 f"- tier hits: `{result.judge_summary.get('tier_hits', {})}`",
             ]
         )

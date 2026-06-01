@@ -222,12 +222,19 @@ def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) 
     if not overlay.steps:
         return '<div class="panel sub">no runs yet - chorus run ... --n 30</div>'
 
+    # Vertical bands, top to bottom: agreement bars (grow up to bar_base), the
+    # step labels, the divergence caption, then the cell grid. Keeping each in its
+    # own row stops the caption colliding with the bars and the first lanes.
     cell_w = 48
     cell_h = 28
     left = 110
-    top = 96
-    width = left + len(overlay.steps) * cell_w + 40
-    height = top + len(overlay.trajectory_ids) * cell_h + 74
+    bar_base = 92
+    grid_top = 142
+    n_rows = len(overlay.trajectory_ids)
+    n_steps = len(overlay.steps)
+    grid_bottom = grid_top + n_rows * cell_h
+    width = left + n_steps * cell_w + 40
+    height = grid_bottom + 34
     div = overlay.divergence_step
     band = ""
     if div is not None:
@@ -235,25 +242,24 @@ def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) 
         band = (
             '<rect class="div-band div-toggle" '
             "onclick=\"document.body.classList.toggle('split-only')\" "
-            f'x="{x}" y="50" width="{cell_w - 6}" '
-            f'height="{height - 84}"/>'
-            f'<text class="note" x="{left}" y="78">divergence - step {div}</text>'
-            f'<text class="axis" x="{left}" y="94">click band to isolate split lanes</text>'
+            f'x="{x}" y="48" width="{cell_w - 6}" height="{grid_bottom - 48}">'
+            "<title>click to isolate the lanes that split here</title></rect>"
+            f'<text class="note" x="{x}" y="128">↑ divergence · step {div}</text>'
         )
     bars = "\n".join(
-        _agreement_bar(left + i * cell_w, value, cell_w)
+        _agreement_bar(left + i * cell_w, value, cell_w, bar_base)
         for i, value in enumerate(overlay.agreement)
     )
     step_labels = "\n".join(
-        f'<text class="axis" x="{left + i * cell_w + 12}" y="46">s{step}</text>'
+        f'<text class="axis" x="{left + i * cell_w + 14}" y="110">s{step}</text>'
         for i, step in enumerate(overlay.steps)
     )
     row_map = {trajectory_id: index for index, trajectory_id in enumerate(overlay.trajectory_ids)}
     cells = "\n".join(
-        _overlay_cell(cell, left, top, cell_w, cell_h, div, row_map) for cell in overlay.cells
+        _overlay_cell(cell, left, grid_top, cell_w, cell_h, div, row_map) for cell in overlay.cells
     )
     labels = "\n".join(
-        _lane_label(trajectory_id, index, top + index * cell_h + 18, trace_href)
+        _lane_label(trajectory_id, index, grid_top + index * cell_h + 15, trace_href)
         for index, trajectory_id in enumerate(overlay.trajectory_ids)
     )
     confidence = (
@@ -267,18 +273,18 @@ def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) 
         f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="divergence overlay">'
         f'<rect class="overlay-bg" x="0" y="0" width="{width}" height="{height}" rx="8"/>'
         f"{band}{bars}{step_labels}{labels}{cells}"
-        '<text class="axis" x="42" y="42">agree</text>'
-        '<text class="axis" x="42" y="'
-        f'{height - 26}">converged / diverged / failed / inactive</text>'
+        '<text class="axis" x="42" y="76">agree</text>'
+        f'<text class="axis" x="42" y="{height - 13}">'
+        "converged / diverged / failed / inactive</text>"
         "</svg></div>"
     )
 
 
-def _agreement_bar(x: int, value: float | None, cell_w: int) -> str:
+def _agreement_bar(x: int, value: float | None, cell_w: int, base: int = 92) -> str:
     if value is None:
-        return f'<rect class="inactive" x="{x}" y="62" width="{cell_w - 8}" height="24"/>'
-    height = max(2, int(value * 36))
-    y = 86 - height
+        return f'<rect class="inactive" x="{x}" y="{base - 24}" width="{cell_w - 8}" height="24"/>'
+    height = max(3, int(value * 40))
+    y = base - height
     fill = "#10b981" if value >= 1.0 else "#f59e0b"
     return f'<rect x="{x}" y="{y}" width="{cell_w - 8}" height="{height}" rx="3" fill="{fill}"/>'
 
@@ -336,6 +342,8 @@ def _judgment_panel(result: RunResult) -> str:
     return (
         '<div class="panel">'
         '<div class="label">judgment cascade</div>'
+        '<div class="sub">synthetic-validated &mdash; real accuracy-parity number'
+        " lands in Phase 5</div>"
         f'<div class="kv"><span class="k">cost ratio</span><span>{ratio:.2f}</span></div>'
         f'<div class="kv"><span class="k">judge-every-run</span><span>${baseline:.4f}</span></div>'
         f'<div class="kv"><span class="k">cascade</span><span>${cascade:.4f}</span></div>'

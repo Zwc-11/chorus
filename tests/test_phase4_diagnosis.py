@@ -109,6 +109,79 @@ def test_timeout_budget_loop_and_unknown_detectors_are_deterministic() -> None:
     assert unknown is not None and unknown.cls == "unknown"
 
 
+def _tool_step(step: int, base_seq: int, tool: str, args: dict, result_hash: str) -> list[Event]:
+    return [
+        _event(base_seq, EventType.STEP_STARTED, {"index": step}),
+        _event(base_seq + 1, EventType.TOOL_CALL, {"tool": tool, "args": args}),
+        _event(base_seq + 2, EventType.TOOL_RESULT, {"tool": tool, "result_hash": result_hash}),
+    ]
+
+
+def _revisits_then_violates_contract() -> list[Event]:
+    """A contract violation whose trace legitimately revisits read_file three
+    times, non-consecutively -- ordinary iteration, not a loop."""
+
+    events: list[Event] = [_event(1, EventType.TRAJECTORY_STARTED, {})]
+    seq = 2
+    plan = [
+        ("read_file", {"path": "a"}, "ha"),
+        ("bash", {"command": "pytest"}, "hb"),
+        ("read_file", {"path": "a"}, "ha"),  # revisit
+        ("edit", {"text": "y"}, "he"),
+        ("read_file", {"path": "a"}, "ha"),  # revisit
+        ("bash", {"command": "ls"}, "hl"),
+        ("read_file", {"path": "a"}, "ha"),  # revisit -> 4 total, never adjacent
+    ]
+    for step, (tool, args, result_hash) in enumerate(plan):
+        events.extend(_tool_step(step, seq, tool, args, result_hash))
+        seq += 3
+    events.append(_event(seq, EventType.CONTRACT_CHECK, {"accepted": False, "step": len(plan)}))
+    return events
+
+
+def _spins_in_place() -> list[Event]:
+    """A genuine loop: the same action and result in four consecutive steps."""
+
+    events: list[Event] = [_event(1, EventType.TRAJECTORY_STARTED, {})]
+    seq = 2
+    for step in range(4):
+        events.extend(_tool_step(step, seq, "search", {"q": "x"}, "hs"))
+        seq += 3
+    return events
+
+
+def test_revisiting_a_tool_is_not_a_loop() -> None:
+    # The bug: total-count loop detection mislabelled this contract failure as a
+    # loop because read_file appeared four times. State advanced between repeats,
+    # so it is contract_violation, not nondeterministic_loop.
+    diagnosis = classify_trajectory(_revisits_then_violates_contract(), task=TASK)
+    assert diagnosis is not None
+    assert diagnosis.cls == "contract_violation"
+
+
+def test_consecutive_identical_action_is_still_a_loop() -> None:
+    diagnosis = classify_trajectory(_spins_in_place(), task=TASK)
+    assert diagnosis is not None
+    assert diagnosis.cls == "nondeterministic_loop"
+
+
+def test_confusion_matrix_has_no_contract_to_loop_bleed() -> None:
+    fixtures = {
+        "contract_violation": _revisits_then_violates_contract(),
+        "nondeterministic_loop": _spins_in_place(),
+        "tool_error": [
+            _event(1, EventType.STEP_STARTED, {"index": 0}),
+            _event(2, EventType.TOOL_RESULT, {"tool": "bash", "error": "exit 1"}),
+        ],
+    }
+    report = validate_classifier(fixtures, task=TASK)
+
+    assert report.confusion["contract_violation"].get("nondeterministic_loop", 0) == 0
+    assert report.precision["contract_violation"] == 1.0
+    assert report.precision["nondeterministic_loop"] == 1.0
+    assert report.recall["contract_violation"] == 1.0
+
+
 def test_classifier_validation_reports_precision_recall_f1() -> None:
     fixtures = {
         "tool_error": [

@@ -212,18 +212,69 @@ def _detect_nondeterministic_loop(
     events: list[Event], task: TaskSpec | None, policy: FailurePolicy
 ) -> FailureDiagnosis | None:
     del task
-    counts: Counter[tuple] = Counter()
+    # A loop is the same action producing the same result in *consecutive* steps:
+    # the agent spins without advancing state. Counting total occurrences instead
+    # would mislabel ordinary iteration -- a trajectory that legitimately revisits
+    # a tool (e.g. reads a file early and again later) is not stuck, and must fall
+    # through to its real root cause (e.g. contract_violation). Requiring identical
+    # (action, result) back to back is the "no state change between repeats" guard.
+    previous: tuple | None = None
+    run_length = 0
     for step in range((_last_step(events) or -1) + 1):
-        signature = step_signature(events, step)
-        if signature is not None:
-            counts[signature] += 1
-            if counts[signature] > policy.loop_threshold:
-                return FailureDiagnosis(
-                    cls="nondeterministic_loop",
-                    step=step,
-                    detail=f"signature repeated {counts[signature]} times",
-                )
+        fingerprint = _step_fingerprint(events, step)
+        if fingerprint is None:
+            previous = None
+            run_length = 0
+            continue
+        if fingerprint == previous:
+            run_length += 1
+        else:
+            previous = fingerprint
+            run_length = 1
+        if run_length > policy.loop_threshold:
+            return FailureDiagnosis(
+                cls="nondeterministic_loop",
+                step=step,
+                detail=f"action repeated with no state change {run_length} times",
+            )
     return None
+
+
+def _step_fingerprint(events: list[Event], step: int) -> tuple | None:
+    """The (action, result) a trajectory took at a step -- identical fingerprints
+    in adjacent steps mean no state changed between them."""
+
+    action = step_signature(events, step)
+    if action is None:
+        return None
+    return (action, _step_result_key(events, step))
+
+
+def _step_result_key(events: list[Event], step: int) -> tuple | None:
+    for event in _step_window(events, step):
+        if event.type == EventType.TOOL_RESULT:
+            if "error" in event.payload:
+                return ("error", event.payload.get("error_type", "ToolError"))
+            return ("result", event.payload.get("result_hash"))
+    return None
+
+
+def _step_window(events: list[Event], step: int) -> list[Event]:
+    """Events emitted within one step (after its STEP_STARTED, before the next)."""
+
+    start_index = None
+    end_seq = None
+    for index, event in enumerate(events):
+        if event.type == EventType.STEP_STARTED and int(event.payload.get("index", -1)) == step:
+            start_index = index
+            for later in events[index + 1 :]:
+                if later.type == EventType.STEP_STARTED:
+                    end_seq = later.seq
+                    break
+            break
+    if start_index is None:
+        return []
+    return [event for event in events[start_index + 1 :] if end_seq is None or event.seq < end_seq]
 
 
 def _detect_contract_violation(
