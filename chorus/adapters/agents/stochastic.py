@@ -29,6 +29,18 @@ from chorus.core.types import TaskSpec
 MODEL_NAME = "claude-sim-4"
 _PHASES = ("plan", "act", "reflect", "verify")
 
+# A fixed opening plan every trajectory follows identically. Because all
+# trajectories take the same actions here, the divergence overlay shows them
+# *converged* through the prefix and only splitting once seed-driven choices
+# begin -- which is the whole point of the overlay: locating the step where runs
+# stop agreeing. (``None`` args mean "edit the current working text".)
+_PREFIX_PLAN: tuple[tuple[str, dict[str, Any] | None], ...] = (
+    ("read_file", {"path": "src/main.py"}),
+    ("bash", {"command": "pytest -q"}),
+    ("read_file", {"path": "tests/test_main.py"}),
+    ("edit", None),
+)
+
 
 class FlakyToolError(RuntimeError):
     """Raised by a simulated tool to model a transient infrastructure failure."""
@@ -48,8 +60,8 @@ class StochasticAgent:
         success_rate: float = 0.7,
         error_rate: float = 0.0,
         seed: int = 0,
-        min_steps: int = 2,
-        max_steps: int = 5,
+        converge_steps: int = 4,
+        diverge_steps: int = 4,
     ) -> None:
         if not 0.0 <= success_rate <= 1.0:
             raise ValueError("success_rate must be in [0, 1]")
@@ -58,18 +70,18 @@ class StochasticAgent:
         self._success_rate = success_rate
         self._error_rate = error_rate
         self._rng = Random(seed)
-        self._min_steps = min_steps
-        self._max_steps = max_steps
+        self._converge_steps = converge_steps
+        self._diverge_steps = diverge_steps
 
     async def run(self, task: TaskSpec, gateway: ToolGatewayPort) -> str:
         text = task.prompt
-        steps = self._rng.randint(self._min_steps, self._max_steps)
 
         # Decide the outcome up front, but spend the steps first so even failed
         # and errored runs produce a realistic, costed trajectory. The error roll
         # precedes the success roll so seeds stay stable as rates change.
         will_error = self._rng.random() < self._error_rate
         will_pass = self._rng.random() < self._success_rate
+        steps = self._converge_steps + self._rng.randint(0, self._diverge_steps)
 
         for index in range(steps):
             phase = _PHASES[index % len(_PHASES)]
@@ -82,7 +94,10 @@ class StochasticAgent:
                 latency_ms=self._rng.uniform(280.0, 1600.0),
                 content=f"({phase}) working on: {text}",
             )
-            tool, args = self._pick_tool(text)
+            if index < self._converge_steps:
+                tool, args = self._planned_tool(index, text)
+            else:
+                tool, args = self._pick_tool(text)
             text = await gateway.call(tool, args)
 
         await gateway.step(index=steps, phase="verify")
@@ -101,6 +116,12 @@ class StochasticAgent:
         if will_pass:
             return await gateway.call("transform", {"text": task.prompt})
         return await gateway.call("emit", {"text": task.prompt})
+
+    def _planned_tool(self, index: int, text: str) -> tuple[str, dict[str, Any]]:
+        tool, args = _PREFIX_PLAN[index % len(_PREFIX_PLAN)]
+        if args is None:
+            return tool, {"text": text}
+        return tool, dict(args)
 
     def _pick_tool(self, text: str) -> tuple[str, dict[str, Any]]:
         choice = self._rng.choice(("read_file", "bash", "edit"))

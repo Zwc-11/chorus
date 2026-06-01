@@ -18,7 +18,14 @@ class ToolGatewayPort(Protocol):
     async def call(self, name: str, args: dict[str, Any]) -> Any:
         """Call a tool through the single record/replay choke point."""
 
-    async def step(self, *, index: int, phase: str = ...) -> None:
+    async def step(
+        self,
+        *,
+        index: int,
+        phase: str = ...,
+        input_data: Any | None = ...,
+        output_data: Any | None = ...,
+    ) -> None:
         """Mark a step boundary in the trajectory."""
 
     async def model(

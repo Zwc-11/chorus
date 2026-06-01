@@ -195,6 +195,16 @@ def _trajectory_to_trace(events: list[Event], *, capture_content: bool, replay: 
             cursor += duration
         elif event.type == EventType.CONTRACT_CHECK:
             accepted = bool(payload.get("accepted", False))
+            attrs: dict[str, Any] = {
+                "chorus.contract.result": "pass" if accepted else "fail",
+            }
+            if "step" in payload and payload.get("step") is not None:
+                attrs["chorus.contract.step"] = int(payload["step"])
+                if not accepted:
+                    attrs["chorus.failure.step"] = int(payload["step"])
+            for key in ("side", "field", "expected", "got"):
+                if key in payload:
+                    attrs[f"chorus.contract.{key}"] = payload[key]
             add(
                 Span(
                     span_id=_sid(trajectory_id, event.seq, "contract"),
@@ -205,7 +215,7 @@ def _trajectory_to_trace(events: list[Event], *, capture_content: bool, replay: 
                     start_ms=cursor,
                     duration_ms=0.0,
                     status="ok" if accepted else "error",
-                    attributes={"chorus.contract.result": "pass" if accepted else "fail"},
+                    attributes=attrs,
                 )
             )
         elif event.type == EventType.VERDICT:
@@ -227,10 +237,12 @@ def _trajectory_to_trace(events: list[Event], *, capture_content: bool, replay: 
     if outcome != "pass" and failure_class:
         if root is not None:
             root.attributes["chorus.failure.class"] = failure_class
+            _stamp_failure_details(root.attributes, events)
         failing = last_leaf
         if failing is not None:
             failing.status = "error"
             failing.attributes["chorus.failure.class"] = failure_class
+            _stamp_failure_details(failing.attributes, events)
 
     if replay:
         for span in spans:
@@ -256,3 +268,15 @@ def _trajectory_cost(events: list[Event]) -> float:
         if event.type == EventType.TRAJECTORY_FINISHED:
             return float(event.payload.get("cost_usd", 0.0))
     return 0.0
+
+
+def _stamp_failure_details(attrs: dict[str, Any], events: list[Event]) -> None:
+    for event in events:
+        if event.type == EventType.VERDICT:
+            if event.payload.get("failure_step") is not None:
+                attrs["chorus.failure.step"] = int(event.payload["failure_step"])
+            if event.payload.get("failure_detail"):
+                attrs["chorus.failure.detail"] = event.payload["failure_detail"]
+            if event.payload.get("failure_confidence") is not None:
+                attrs["chorus.failure.confidence"] = float(event.payload["failure_confidence"])
+            return

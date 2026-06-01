@@ -1,81 +1,60 @@
-"""Trajectory-fan visualizer (standalone HTML/SVG).
-
-This file writes a single self-contained HTML file — no app shell, no external
-assets — that renders the trajectory fan as SVG. It is the screenshot-able
-artifact: open it in any browser to see the ``N`` lanes for a run, color-coded by
-outcome, with the ``pass@1`` vs ``pass^k`` reliability gap drawn to scale.
-"""
+"""Standalone reliability, divergence, judgment, and diagnosis report."""
 
 from __future__ import annotations
 
+from collections import Counter
 from html import escape
 from pathlib import Path
 
+from chorus.core.divergence import DivergenceOverlay, build_divergence_overlay, signature_label
+from chorus.core.events import Event
 from chorus.core.types import RunResult
 
-_FILL = {"pass": "#22c55e", "fail": "#ef4444", "error": "#f59e0b"}
-
-_ROW_H = 26
-_TOP = 150
-_TRACK_X = 150
-_TRACK_W = 560
-_AXIS_HINT = "each lane = one independent run · dot at right = outcome"
-
-
-def _lane_rows(result: RunResult) -> str:
-    rows: list[str] = []
-    for index, t in enumerate(result.trajectories):
-        y = _TOP + index * _ROW_H
-        fill = _FILL.get(t.outcome, "#94a3b8")
-        label = escape(t.trajectory_id.rsplit("_t", 1)[-1].rjust(2, "0"))
-        note = escape(t.output if t.outcome == "pass" else (t.failure_class or t.outcome))
-        rows.append(
-            f'<text x="{_TRACK_X - 12}" y="{y + 5}" class="lbl" text-anchor="end">t{label}</text>'
-            f'<line x1="{_TRACK_X}" y1="{y}" x2="{_TRACK_X + _TRACK_W}" y2="{y}" class="track"/>'
-            f'<circle cx="{_TRACK_X + _TRACK_W}" cy="{y}" r="6" fill="{fill}"/>'
-            f'<text x="{_TRACK_X + 10}" y="{y + 5}" class="note" fill="{fill}">{note}</text>'
-            f'<text x="{_TRACK_X + _TRACK_W + 16}" y="{y + 5}" class="meta">'
-            f"${t.cost_usd:.3f} · {t.latency_ms:.0f}ms</text>"
-        )
-    return "\n".join(rows)
+_FILL = {
+    "pass": "#22c55e",
+    "fail": "#ef4444",
+    "error": "#f59e0b",
+    "converged": "#14532d",
+    "diverged": "#854d0e",
+    "failed": "#7f1d1d",
+    "inactive": "transparent",
+}
 
 
-def _metric_bar(label: str, value: float, sub: str, y: int, color: str) -> str:
-    width = round(max(0.0, min(1.0, value)) * _TRACK_W)
-    return (
-        f'<text x="{_TRACK_X - 12}" y="{y + 13}" class="lbl" text-anchor="end">{label}</text>'
-        f'<rect x="{_TRACK_X}" y="{y}" width="{_TRACK_W}" height="18" rx="3" class="barbg"/>'
-        f'<rect x="{_TRACK_X}" y="{y}" width="{width}" height="18" rx="3" fill="{color}"/>'
-        f'<text x="{_TRACK_X + _TRACK_W + 16}" y="{y + 13}" class="meta">{sub}</text>'
-    )
-
-
-def render_fan_html(result: RunResult) -> str:
+def render_fan_html(
+    result: RunResult,
+    *,
+    events: list[Event] | None = None,
+    trace_href: str | None = "trace.html",
+) -> str:
     metrics = result.metrics
-    passes = sum(1 for t in result.trajectories if t.outcome == "pass")
-    total = len(result.trajectories)
+    passes = sum(1 for item in result.trajectories if item.outcome == "pass")
+    failures = len(result.trajectories) - passes
+    errors = sum(1 for item in result.trajectories if item.outcome == "error")
     lower, upper = metrics.wilson_ci
+    overlay = build_divergence_overlay(events) if events else None
 
-    lanes_bottom = _TOP + total * _ROW_H
-    bars_y = lanes_bottom + 24
-    height = bars_y + 90
-    verdict_color = _FILL["pass"] if result.verdict == "pass" else _FILL["fail"]
-
-    bars = "\n".join(
+    cards = "\n".join(
         [
-            _metric_bar(
+            _metric_card(
                 "pass@1",
-                metrics.pass_at_1,
-                f"{metrics.pass_at_1:.2f} — {passes}/{total} single runs pass",
-                bars_y,
-                "#22c55e",
+                f"{metrics.pass_at_1:.2f}",
+                f"95% CI {lower:.2f}-{upper:.2f}",
             ),
-            _metric_bar(
-                "pass^k",
-                metrics.pass_at_k,
-                f"{metrics.pass_at_k:.4f} — all {metrics.k} runs pass",
-                bars_y + 30,
-                "#ef4444",
+            _metric_card(
+                "pass^k projected",
+                f"{metrics.pass_at_k:.3f}",
+                f"k = {metrics.k}, i.i.d.",
+            ),
+            _metric_card(
+                "variance",
+                f"{metrics.variance:.2f}",
+                f"across {len(result.trajectories)} runs",
+            ),
+            _metric_card(
+                "failures",
+                f"{failures} / {len(result.trajectories)}",
+                f"{failures - errors} fail - {errors} error",
             ),
         ]
     )
@@ -84,45 +63,319 @@ def render_fan_html(result: RunResult) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>Chorus fan — {escape(result.task_id)}</title>
+<title>Chorus reliability - {escape(result.task_id)}</title>
 <style>
-  body {{ background:#0b1020; color:#e2e8f0; margin:0;
-         font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }}
-  .wrap {{ max-width:920px; margin:0 auto; padding:28px; }}
-  h1 {{ font-size:18px; margin:0 0 2px; }}
-  .sub {{ color:#94a3b8; margin:0 0 18px; }}
-  .pill {{ padding:2px 10px; border-radius:999px; font-weight:700; color:#0b1020; }}
-  .track {{ stroke:#1e293b; stroke-width:2; }}
-  .barbg {{ fill:#1e293b; }}
-  .lbl {{ fill:#94a3b8; font-size:12px; }}
-  .note {{ font-size:12px; }}
-  .meta {{ fill:#64748b; font-size:11px; }}
-  .axis {{ fill:#475569; font-size:11px; }}
+  :root {{
+    --bg:#050505; --panel:#242423; --panel2:#30302e; --line:#5e5e59;
+    --txt:#f5f5f2; --muted:#b8b8b2; --dim:#8b8b84; --blue:#2f8ee5;
+    --green:#10b981; --warn:#f59e0b; --err:#ef4444;
+    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans: ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
+  }}
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; background:var(--bg); color:var(--txt); font-family:var(--sans); }}
+  main {{ max-width:1120px; margin:0 auto; padding:26px; }}
+  h1 {{ margin:0 0 16px; font-size:16px; font-weight:600; color:var(--muted); }}
+  .cards {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:24px; }}
+  .card {{ background:var(--panel); border-radius:8px; padding:20px 24px; min-height:126px; }}
+  .label {{ color:var(--muted); font-size:13px; text-transform:lowercase; }}
+  .num {{ font:700 34px/1.1 var(--mono); margin-top:12px; }}
+  .sub {{ color:var(--muted); font:600 13px/1.3 var(--mono); margin-top:6px; }}
+  .zone {{ margin-top:28px; }}
+  .legend {{ display:flex; gap:28px; font-weight:700; color:var(--muted); margin:0 0 10px; }}
+  .dot {{ width:11px; height:11px; border-radius:50%; display:inline-block; margin-right:8px; }}
+  svg {{ width:100%; height:auto; display:block; }}
+  .axis {{ fill:var(--muted); font:12px var(--mono); }}
+  .grid {{ stroke:var(--line); stroke-width:1; opacity:.55; }}
+  .projected {{ fill:none; stroke:var(--blue); stroke-width:3; }}
+  .empirical {{ fill:none; stroke:var(--green); stroke-width:3; stroke-dasharray:5 6; }}
+  .shade {{ fill:#7f1d1d; opacity:.7; }}
+  .note {{ fill:#fca5a5; font:12px var(--mono); }}
+  .overlay-bg {{ fill:var(--panel2); stroke:var(--line); stroke-width:1; }}
+  .lane-label {{ fill:var(--muted); font:13px var(--mono); }}
+  .cell {{ stroke:#3f3f3a; stroke-width:1; rx:4; }}
+  .inactive {{ fill:transparent; stroke:#6b6b65; stroke-dasharray:5 4; }}
+  .div-band {{ fill:#f59e0b; opacity:.18; }}
+  .div-toggle {{ cursor:pointer; }}
+  .div-outline {{ fill:none; stroke:#f59e0b; stroke-width:2; }}
+  .split-only .cellwrap:not(.split) {{ opacity:.18; }}
+  .panel {{ background:var(--panel); border-radius:8px; padding:16px; }}
+  .cols {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }}
+  .bar {{ height:10px; background:#171717; border-radius:3px; overflow:hidden; display:flex; }}
+  .seg {{ height:10px; }}
+  .kv {{ display:grid; grid-template-columns:170px 1fr; gap:8px;
+         font:13px var(--mono); margin:7px 0; }}
+  .k {{ color:var(--muted); }}
+  a {{ color:inherit; text-decoration:none; }}
+  @media (max-width: 820px) {{
+    .cards, .cols {{ grid-template-columns:1fr; }}
+    main {{ padding:16px; }}
+  }}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Chorus trajectory fan
-    <span class="pill" style="background:{verdict_color}">{escape(result.verdict)}</span>
-  </h1>
-  <p class="sub">task <b>{escape(result.task_id)}</b> · {total} trajectories ·
-     pass@1 {metrics.pass_at_1:.2f} · pass^k {metrics.pass_at_k:.4f} ·
-     Wilson95 [{lower:.2f}, {upper:.2f}] · mean ${metrics.mean_cost:.4f} ·
-     p50 {metrics.p50_latency_ms:.0f}ms / p95 {metrics.p95_latency_ms:.0f}ms</p>
-  <svg viewBox="0 0 920 {height}" width="100%" role="img"
-       aria-label="Trajectory fan for {escape(result.task_id)}">
-    <text x="{_TRACK_X}" y="120" class="axis">{_AXIS_HINT}</text>
-    {_lane_rows(result)}
-    {bars}
-  </svg>
-</div>
+<main>
+  <h1>Chorus - {escape(result.task_id)} - {escape(result.run_id)}</h1>
+  <section class="cards">{cards}</section>
+  <section class="zone">
+    <div class="legend">
+      <span><span class="dot" style="background:var(--blue)"></span>projected (i.i.d. model)</span>
+      <span><span class="dot" style="background:var(--green)"></span>empirical (unbiased)</span>
+    </div>
+    {_decay_curve(result)}
+  </section>
+  <section class="zone">
+    {_overlay_section(overlay, trace_href)}
+  </section>
+  <section class="zone cols">
+    {_judgment_panel(result)}
+    {_failure_panel(result)}
+  </section>
+</main>
 </body>
 </html>
 """
 
 
-def write_fan_html(result: RunResult, path: Path | str) -> Path:
+def write_fan_html(
+    result: RunResult,
+    path: Path | str,
+    *,
+    events: list[Event] | None = None,
+    trace_href: str | None = "trace.html",
+) -> Path:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_fan_html(result), encoding="utf-8")
+    out.write_text(render_fan_html(result, events=events, trace_href=trace_href), encoding="utf-8")
     return out
+
+
+def _metric_card(label: str, value: str, subline: str) -> str:
+    return (
+        '<div class="card">'
+        f'<div class="label">{escape(label)}</div>'
+        f'<div class="num">{escape(value)}</div>'
+        f'<div class="sub">{escape(subline)}</div>'
+        "</div>"
+    )
+
+
+def _decay_curve(result: RunResult) -> str:
+    curve = result.metrics.curve
+    if not curve:
+        return '<div class="panel sub">no reliability curve yet</div>'
+    width = 1000
+    height = 310
+    left = 70
+    top = 24
+    chart_w = 880
+    chart_h = 230
+    max_k = max(point.k for point in curve)
+    passes = sum(1 for item in result.trajectories if item.outcome == "pass")
+
+    def xy(k: int, value: float) -> tuple[float, float]:
+        x = left + ((k - 1) / max(max_k - 1, 1)) * chart_w
+        y = top + (1 - max(0.0, min(1.0, value))) * chart_h
+        return x, y
+
+    projected = " ".join(f"{x:.1f},{y:.1f}" for x, y in (xy(p.k, p.projected) for p in curve))
+    empirical = " ".join(f"{x:.1f},{y:.1f}" for x, y in (xy(p.k, p.empirical) for p in curve))
+    unsupported_x, _ = xy(min(passes + 1, max_k), 0.0)
+    shade = ""
+    if passes < max_k:
+        shade_w = left + chart_w - unsupported_x
+        shade = (
+            f'<rect class="shade" x="{unsupported_x:.1f}" y="{top}" '
+            f'width="{shade_w:.1f}" height="{chart_h}"/>'
+            f'<text class="note" x="{unsupported_x + 10:.1f}" y="{top + 20}">'
+            "data cannot support</text>"
+        )
+    points = "\n".join(
+        f'<circle cx="{xy(p.k, p.empirical)[0]:.1f}" cy="{xy(p.k, p.empirical)[1]:.1f}" '
+        'r="4" fill="var(--green)"/>'
+        for p in curve
+    )
+    y_ticks = "\n".join(
+        f'<line class="grid" x1="{left}" y1="{top + chart_h * (1 - v):.1f}" '
+        f'x2="{left + chart_w}" y2="{top + chart_h * (1 - v):.1f}"/>'
+        f'<text class="axis" x="24" y="{top + chart_h * (1 - v) + 4:.1f}">{v:.2f}</text>'
+        for v in (0.0, 0.25, 0.5, 0.75, 1.0)
+    )
+    x_labels = "\n".join(
+        f'<text class="axis" x="{xy(p.k, 0)[0] - 6:.1f}" y="{top + chart_h + 28}">k{p.k}</text>'
+        for p in curve
+        if p.k == 1 or p.k == max_k or p.k % max(1, max_k // 6) == 0
+    )
+    return (
+        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        'aria-label="pass to the k reliability decay curve">'
+        f"{y_ticks}{shade}"
+        f'<polyline class="projected" points="{projected}"/>'
+        f'<polyline class="empirical" points="{empirical}"/>'
+        f"{points}{x_labels}</svg>"
+    )
+
+
+def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) -> str:
+    if overlay is None:
+        return '<div class="panel sub">no event log available for divergence overlay</div>'
+    if not overlay.steps:
+        return '<div class="panel sub">no runs yet - chorus run ... --n 30</div>'
+
+    cell_w = 48
+    cell_h = 28
+    left = 110
+    top = 96
+    width = left + len(overlay.steps) * cell_w + 40
+    height = top + len(overlay.trajectory_ids) * cell_h + 74
+    div = overlay.divergence_step
+    band = ""
+    if div is not None:
+        x = left + div * cell_w
+        band = (
+            '<rect class="div-band div-toggle" '
+            "onclick=\"document.body.classList.toggle('split-only')\" "
+            f'x="{x}" y="50" width="{cell_w - 6}" '
+            f'height="{height - 84}"/>'
+            f'<text class="note" x="{left}" y="78">divergence - step {div}</text>'
+            f'<text class="axis" x="{left}" y="94">click band to isolate split lanes</text>'
+        )
+    bars = "\n".join(
+        _agreement_bar(left + i * cell_w, value, cell_w)
+        for i, value in enumerate(overlay.agreement)
+    )
+    step_labels = "\n".join(
+        f'<text class="axis" x="{left + i * cell_w + 12}" y="46">s{step}</text>'
+        for i, step in enumerate(overlay.steps)
+    )
+    row_map = {trajectory_id: index for index, trajectory_id in enumerate(overlay.trajectory_ids)}
+    cells = "\n".join(
+        _overlay_cell(cell, left, top, cell_w, cell_h, div, row_map) for cell in overlay.cells
+    )
+    labels = "\n".join(
+        _lane_label(trajectory_id, index, top + index * cell_h + 18, trace_href)
+        for index, trajectory_id in enumerate(overlay.trajectory_ids)
+    )
+    confidence = (
+        '<div class="sub">low confidence: fewer than 5 trajectories</div>'
+        if overlay.low_confidence
+        else ""
+    )
+    return (
+        '<div class="panel">'
+        f"{confidence}"
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="divergence overlay">'
+        f'<rect class="overlay-bg" x="0" y="0" width="{width}" height="{height}" rx="8"/>'
+        f"{band}{bars}{step_labels}{labels}{cells}"
+        '<text class="axis" x="42" y="42">agree</text>'
+        '<text class="axis" x="42" y="'
+        f'{height - 26}">converged / diverged / failed / inactive</text>'
+        "</svg></div>"
+    )
+
+
+def _agreement_bar(x: int, value: float | None, cell_w: int) -> str:
+    if value is None:
+        return f'<rect class="inactive" x="{x}" y="62" width="{cell_w - 8}" height="24"/>'
+    height = max(2, int(value * 36))
+    y = 86 - height
+    fill = "#10b981" if value >= 1.0 else "#f59e0b"
+    return f'<rect x="{x}" y="{y}" width="{cell_w - 8}" height="{height}" rx="3" fill="{fill}"/>'
+
+
+def _lane_label(trajectory_id: str, index: int, y: int, trace_href: str | None) -> str:
+    label = f"#{index + 1:02d}"
+    if trace_href is None:
+        return f'<text class="lane-label" x="42" y="{y}">{label}</text>'
+    href = f"{trace_href}#{escape(trajectory_id)}"
+    return f'<a href="{href}"><text class="lane-label" x="42" y="{y}">{label}</text></a>'
+
+
+def _overlay_cell(
+    cell,
+    left: int,
+    top: int,
+    cell_w: int,
+    cell_h: int,
+    div: int | None,
+    row_map: dict[str, int],
+) -> str:
+    x = left + cell.step * cell_w
+    row_index = row_map[cell.trajectory_id]
+    y = top + row_index * cell_h
+    title = escape(signature_label(cell.signature))
+    if cell.state == "inactive":
+        rect = f'<rect class="cell inactive" x="{x}" y="{y}" width="{cell_w - 8}" height="20"/>'
+    else:
+        rect = (
+            f'<rect class="cell" x="{x}" y="{y}" width="{cell_w - 8}" height="20" '
+            f'fill="{_FILL.get(cell.state, "#334155")}"/>'
+        )
+    outline = (
+        f'<rect class="div-outline" x="{x}" y="{y}" width="{cell_w - 8}" height="20" rx="4"/>'
+        if div == cell.step
+        else ""
+    )
+    classes = ["cellwrap"]
+    if div == cell.step and not cell.in_majority:
+        classes.append("split")
+    return f'<g class="{" ".join(classes)}"><title>{title}</title>{rect}{outline}</g>'
+
+
+def _judgment_panel(result: RunResult) -> str:
+    summary = result.judge_summary
+    if not summary:
+        return (
+            '<div class="panel"><div class="label">judgment</div>'
+            '<div class="sub">not run</div></div>'
+        )
+    baseline = float(summary.get("baseline_cost_usd", 0.0))
+    cascade = float(summary.get("cascade_cost_usd", 0.0))
+    ratio = float(summary.get("cost_ratio", 0.0))
+    tier_hits = summary.get("tier_hits", {})
+    return (
+        '<div class="panel">'
+        '<div class="label">judgment cascade</div>'
+        f'<div class="kv"><span class="k">cost ratio</span><span>{ratio:.2f}</span></div>'
+        f'<div class="kv"><span class="k">judge-every-run</span><span>${baseline:.4f}</span></div>'
+        f'<div class="kv"><span class="k">cascade</span><span>${cascade:.4f}</span></div>'
+        '<div class="kv"><span class="k">tier hits</span>'
+        f"<span>{escape(str(tier_hits))}</span></div>"
+        f'<div class="kv"><span class="k">escalations</span><span>{result.escalations}</span></div>'
+        "</div>"
+    )
+
+
+def _failure_panel(result: RunResult) -> str:
+    counts = Counter(
+        item.failure_class or item.outcome for item in result.trajectories if item.outcome != "pass"
+    )
+    if not counts:
+        rows = '<div class="sub">all trajectories passed</div>'
+    else:
+        total = sum(counts.values())
+        segs = "".join(
+            '<span class="seg" style="'
+            f"width:{(count / total) * 100:.1f}%;"
+            f'background:{_class_color(label)}"></span>'
+            for label, count in counts.items()
+        )
+        items = "".join(
+            f'<div class="kv"><span class="k">{escape(label)}</span><span>{count}</span></div>'
+            for label, count in counts.items()
+        )
+        rows = f'<div class="bar">{segs}</div>{items}'
+    return f'<div class="panel"><div class="label">diagnosis</div>{rows}</div>'
+
+
+def _class_color(label: str) -> str:
+    return {
+        "tool_error": "#f59e0b",
+        "schema_mismatch": "#ef4444",
+        "context_drift": "#a78bfa",
+        "nondeterministic_loop": "#38bdf8",
+        "budget_exceeded": "#fb7185",
+        "timeout": "#f97316",
+        "contract_violation": "#dc2626",
+        "unknown": "#64748b",
+    }.get(label, "#64748b")

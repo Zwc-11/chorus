@@ -138,10 +138,19 @@ _TEMPLATE = r"""<!doctype html>
 const TRACES = __DATA__;
 const RUN = "__RUN__";
 const ICON = { run:"▢", step:"›", model:"✦", tool:"▤", contract:"✓" };
-let sel = { traj:0, span:0 };
+let sel = { traj:indexFromHash(), span:0 };
 
 function fmtMs(ms){ return ms >= 1000 ? (ms/1000).toFixed(2)+"s" : ms.toFixed(0)+"ms"; }
 function el(html){ const t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstChild; }
+function indexFromHash(){
+  const target = decodeURIComponent(location.hash.replace(/^#/, ""));
+  const index = TRACES.findIndex(t => t.trajectory_id === target);
+  return index >= 0 ? index : 0;
+}
+window.addEventListener("hashchange", () => {
+  const index = indexFromHash();
+  if(index !== sel.traj){ sel={traj:index, span:0}; render(); }
+});
 
 function render(){
   const app = document.getElementById("app");
@@ -167,7 +176,11 @@ function renderRail(){
     const row = el(`<div class="traj${sl}"><span class="dot ${cls}"></span>`+
       `<span class="id">#${String(i+1).padStart(2,"0")}${rep}</span>`+
       `<span class="dur">${fmtMs(t.total_ms)}</span></div>`);
-    row.onclick = ()=>{ sel={traj:i, span:0}; render(); };
+    row.onclick = ()=>{
+      sel={traj:i, span:0};
+      history.replaceState(null, "", "#"+encodeURIComponent(t.trajectory_id));
+      render();
+    };
     rail.appendChild(row);
   });
   return rail;

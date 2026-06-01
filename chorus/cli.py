@@ -73,7 +73,7 @@ def demo(
 
 @app.command()
 def run(
-    n: Annotated[int, typer.Option(min=1, help="Number of trajectories to fan out.")] = 12,
+    n: Annotated[int, typer.Option(min=1, help="Number of trajectories to fan out.")] = 30,
     success_rate: Annotated[
         float, typer.Option(min=0.0, max=1.0, help="Per-run success probability of the agent.")
     ] = 0.7,
@@ -97,13 +97,14 @@ def run(
     )
     conductor = RunConductor(agent_factory=factory, storage=store, tools=stochastic_tools())
     result = asyncio.run(conductor.run(demo_task(), n=n))
+    events = list(asyncio.run(store.read_events()))
 
     typer.echo(render_run_report(result))
     typer.echo("")
     typer.echo(render_fan(result, color=not no_color))
     typer.echo(f"\nEvents written to {event_log}")
     if html is not None:
-        out = write_fan_html(result, html)
+        out = write_fan_html(result, html, events=events)
         typer.echo(f"Trajectory fan written to {out}  (open in a browser)")
 
 
@@ -134,7 +135,7 @@ def _verify_replay(conductor: RunConductor, events: list[Event]) -> int:
 
 @app.command()
 def trace(
-    n: Annotated[int, typer.Option(min=1, help="Number of trajectories to trace.")] = 12,
+    n: Annotated[int, typer.Option(min=1, help="Number of trajectories to trace.")] = 30,
     success_rate: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.7,
     error_rate: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.1,
     seed: Annotated[int, typer.Option(help="Base seed; run is fully reproducible.")] = 7,

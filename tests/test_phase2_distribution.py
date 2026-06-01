@@ -15,7 +15,15 @@ from chorus.adapters.agents.stochastic import (
 )
 from chorus.adapters.storage.memory import InMemoryEventStore
 from chorus.core.conductor import RunConductor
-from chorus.core.metrics import reliability_metrics, wilson_interval
+from chorus.core.divergence import build_divergence_overlay, group_trajectory_events
+from chorus.core.events import Event, EventType
+from chorus.core.metrics import (
+    pass_hat_k_unbiased,
+    reliability_curve,
+    reliability_metrics,
+    wilson_interval,
+)
+from chorus.core.results import result_from_events
 from chorus.core.types import ReliabilityMetrics, RunResult, TaskSpec, TrajectoryResult
 from chorus.report.fan import render_fan
 
@@ -66,6 +74,16 @@ def test_pass_at_k_horizon_is_overridable() -> None:
     assert abs(metrics.pass_at_k - 0.5**10) < 1e-12
 
 
+def test_unbiased_pass_hat_k_drops_when_data_cannot_support_k() -> None:
+    assert pass_hat_k_unbiased(3, 4, 2) == 0.5
+    assert pass_hat_k_unbiased(3, 4, 4) == 0.0
+
+    curve = reliability_curve(3, 4)
+    assert curve[-1].k == 4
+    assert curve[-1].projected == 0.75**4
+    assert curve[-1].empirical == 0.0
+
+
 def test_wilson_interval_widens_for_fewer_samples() -> None:
     narrow = wilson_interval(75, 100)
     wide = wilson_interval(3, 4)
@@ -80,6 +98,7 @@ def test_distribution_is_reproducible_for_a_seed() -> None:
     outcomes_second = [t.outcome for t in second.trajectories]
     assert outcomes_first == outcomes_second
     assert first.metrics.pass_at_1 == second.metrics.pass_at_1
+    assert first.metrics.curve == second.metrics.curve
 
 
 def test_run_produces_a_spread_not_a_constant() -> None:
@@ -91,6 +110,47 @@ def test_run_produces_a_spread_not_a_constant() -> None:
     assert result.metrics.variance > 0.0
     # pass^k must compound below pass@1 once the agent is flaky.
     assert result.metrics.pass_at_k < result.metrics.pass_at_1
+    assert result.metrics.pass_at_k_unbiased <= result.metrics.pass_at_k
+
+
+def test_run_result_is_derived_from_recorded_events() -> None:
+    store = InMemoryEventStore()
+    conductor = RunConductor(
+        agent_factory=stochastic_agent_factory(success_rate=0.7, error_rate=0.1, base_seed=7),
+        storage=store,
+        tools=stochastic_tools(),
+    )
+    live = run_async(conductor.run(TASK, n=12))
+    events = list(run_async(store.read_events()))
+    projected = result_from_events(events, run_id=live.run_id, task_id=TASK.task_id)
+
+    assert [t.outcome for t in projected.trajectories] == [t.outcome for t in live.trajectories]
+    assert projected.metrics.pass_at_1 == live.metrics.pass_at_1
+    assert projected.metrics.curve == live.metrics.curve
+
+
+def test_divergence_overlay_detects_first_split() -> None:
+    events = [
+        _event("run_1", "run_1_t1", 1, EventType.TRAJECTORY_STARTED, {"index": 0}),
+        _event("run_1", "run_1_t1", 2, EventType.STEP_STARTED, {"index": 0}),
+        _event("run_1", "run_1_t1", 3, EventType.TOOL_CALL, {"tool": "read", "args": {}}),
+        _event("run_1", "run_1_t1", 4, EventType.STEP_STARTED, {"index": 1}),
+        _event("run_1", "run_1_t1", 5, EventType.TOOL_CALL, {"tool": "edit", "args": {}}),
+        _event("run_1", "run_1_t2", 1, EventType.TRAJECTORY_STARTED, {"index": 1}),
+        _event("run_1", "run_1_t2", 2, EventType.STEP_STARTED, {"index": 0}),
+        _event("run_1", "run_1_t2", 3, EventType.TOOL_CALL, {"tool": "read", "args": {}}),
+        _event("run_1", "run_1_t2", 4, EventType.STEP_STARTED, {"index": 1}),
+        _event("run_1", "run_1_t2", 5, EventType.TOOL_CALL, {"tool": "bash", "args": {}}),
+    ]
+
+    overlay = build_divergence_overlay(events)
+    grouped = group_trajectory_events(events)
+
+    assert overlay.agreement == (1.0, 0.5)
+    assert overlay.divergence_step == 1
+    assert overlay.low_confidence is True
+    assert {cell.state for cell in overlay.cells if cell.step == 1} == {"converged", "diverged"}
+    assert grouped["run_1_t1"][0].trajectory_id == "run_1_t1"
 
 
 def test_error_branch_is_classified_and_costs_accrue() -> None:
@@ -126,3 +186,19 @@ def test_fan_view_reflects_outcomes() -> None:
     assert "pass@1" in rendered
     assert "pass^k" in rendered
     assert "run_demo" in rendered
+
+
+def _event(
+    run_id: str,
+    trajectory_id: str,
+    seq: int,
+    event_type: EventType,
+    payload: dict,
+) -> Event:
+    return Event.create(
+        run_id=run_id,
+        trajectory_id=trajectory_id,
+        seq=seq,
+        event_type=event_type,
+        payload=payload,
+    )

@@ -28,20 +28,31 @@ def render_run_report(result: RunResult) -> str:
     metrics = result.metrics
     lower, upper = metrics.wilson_ci
     passes = sum(1 for t in result.trajectories if t.outcome == "pass")
+    failures = len(result.trajectories) - passes
+    errors = sum(1 for t in result.trajectories if t.outcome == "error")
     lines = [
         f"# Chorus Run {result.run_id}",
         "",
         f"- task: `{result.task_id}`",
         f"- verdict: `{result.verdict}`",
         f"- trajectories: `{len(result.trajectories)}` ({passes} passed)",
-        f"- pass@1 (single-run reliability): `{metrics.pass_at_1:.2f}`",
-        f"- pass^k (all {metrics.k} runs pass): `{metrics.pass_at_k:.4f}`",
+        f"- pass@1 with Wilson 95% CI: `{metrics.pass_at_1:.2f}` `[{lower:.2f}, {upper:.2f}]`",
+        f"- pass^k projected (i.i.d., k={metrics.k}): `{metrics.pass_at_k:.4f}`",
+        f"- pass^k empirical unbiased (k={metrics.k}): `{metrics.pass_at_k_unbiased:.4f}`",
         f"- variance: `{metrics.variance:.4f}`",
-        f"- Wilson 95% CI on pass@1: `[{lower:.2f}, {upper:.2f}]`",
+        f"- failures: `{failures} / {len(result.trajectories)}` ({errors} errors)",
         f"- mean cost: `${metrics.mean_cost:.4f}`",
         f"- p50 latency: `{metrics.p50_latency_ms:.2f} ms`",
         f"- p95 latency: `{metrics.p95_latency_ms:.2f} ms`",
         f"- escalations: `{result.escalations}`",
     ]
+    if result.judge_summary:
+        lines.extend(
+            [
+                f"- judge resolved tier: `{result.judge_summary.get('resolved_tier')}`",
+                f"- judge cost ratio: `{result.judge_summary.get('cost_ratio', 0.0):.2f}`",
+                f"- tier hits: `{result.judge_summary.get('tier_hits', {})}`",
+            ]
+        )
     lines.extend(_failure_breakdown(result))
     return "\n".join(lines)

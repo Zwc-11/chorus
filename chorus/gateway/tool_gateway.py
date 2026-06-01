@@ -13,6 +13,8 @@ from time import perf_counter
 from typing import Any
 
 from chorus.core.events import Event, EventRecorder, EventType, hash_payload
+from chorus.core.schema import validate_json_schema
+from chorus.core.types import TaskSpec
 
 ToolCallable = Callable[[dict[str, Any]], Any | Awaitable[Any]]
 
@@ -39,11 +41,13 @@ class ToolGateway:
         tools: dict[str, ToolCallable] | None = None,
         replay_events: list[Event] | None = None,
         capture_content: bool = False,
+        task: TaskSpec | None = None,
     ) -> None:
         self._mode = mode
         self._recorder = recorder
         self._tools = tools or {}
         self._capture_content = capture_content
+        self._task = task
         self._replay_events = [
             event
             for event in replay_events or []
@@ -55,6 +59,7 @@ class ToolGateway:
         self._input_tokens = 0
         self._output_tokens = 0
         self._latency_ms = 0.0
+        self._current_step_index: int | None = None
 
     @property
     def tool_call_count(self) -> int:
@@ -82,6 +87,10 @@ class ToolGateway:
 
         return self._latency_ms
 
+    @property
+    def current_step_index(self) -> int | None:
+        return self._current_step_index
+
     @classmethod
     def record(
         cls,
@@ -89,25 +98,82 @@ class ToolGateway:
         recorder: EventRecorder,
         tools: dict[str, ToolCallable],
         capture_content: bool = False,
+        task: TaskSpec | None = None,
     ) -> ToolGateway:
         return cls(
             mode=GatewayMode.RECORD,
             recorder=recorder,
             tools=tools,
             capture_content=capture_content,
+            task=task,
         )
 
     @classmethod
     def replay(cls, events: list[Event]) -> ToolGateway:
         return cls(mode=GatewayMode.REPLAY, replay_events=events)
 
-    async def step(self, *, index: int, phase: str = "act") -> None:
+    async def step(
+        self,
+        *,
+        index: int,
+        phase: str = "act",
+        input_data: Any | None = None,
+        output_data: Any | None = None,
+    ) -> None:
         """Mark a step boundary. Structural only — recorded live, skipped on replay."""
 
         if self._mode == GatewayMode.RECORD:
             if self._recorder is None:
                 raise RuntimeError("record mode requires an event recorder")
+            self._current_step_index = index
             await self._recorder.emit(EventType.STEP_STARTED, {"index": index, "phase": phase})
+            await self._check_step_contract(index, input_data=input_data, output_data=output_data)
+
+    async def _check_step_contract(
+        self,
+        index: int,
+        *,
+        input_data: Any | None,
+        output_data: Any | None,
+    ) -> None:
+        if self._recorder is None or self._task is None:
+            return
+        contract = self._task.step_contracts.get(index)
+        if contract is None:
+            return
+        for side, schema, data in (
+            ("input", contract.input_schema, input_data),
+            ("output", contract.output_schema, output_data),
+        ):
+            if schema is None:
+                continue
+            issues = validate_json_schema(data, schema)
+            if not issues:
+                await self._recorder.emit(
+                    EventType.CONTRACT_CHECK,
+                    {
+                        "task_id": self._task.task_id,
+                        "result": "pass",
+                        "accepted": True,
+                        "step": index,
+                        "side": side,
+                    },
+                )
+                continue
+            for issue in issues:
+                await self._recorder.emit(
+                    EventType.CONTRACT_CHECK,
+                    {
+                        "task_id": self._task.task_id,
+                        "result": "fail",
+                        "accepted": False,
+                        "step": index,
+                        "side": side,
+                        "field": issue.field,
+                        "expected": issue.expected,
+                        "got": issue.got,
+                    },
+                )
 
     async def model(
         self,

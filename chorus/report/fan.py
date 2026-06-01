@@ -80,13 +80,17 @@ def render_fan(
     lines.extend(_lane(t, color, ascii_only) for t in result.trajectories)
 
     strip = " ".join(_glyph(t.outcome, color, ascii_only) for t in result.trajectories)
+    lower, upper = metrics.wilson_ci
     lines += [
         "",
         f"  fan: {strip}",
         "",
         f"  pass@1  {_bar(metrics.pass_at_1, width, color, ascii_only)}  "
-        f"{metrics.pass_at_1:.2f}   ({passes}/{total} single runs pass)",
-        f"  pass^k  {_bar(metrics.pass_at_k, width, color, ascii_only, 'fail')}  "
-        f"{metrics.pass_at_k:.4f}  (all {metrics.k} runs pass)",
+        f"{metrics.pass_at_1:.2f}   Wilson95 [{lower:.2f}, {upper:.2f}]",
+        f"  pass^k projected  {_bar(metrics.pass_at_k, width, color, ascii_only, 'fail')}  "
+        f"{metrics.pass_at_k:.4f}  (i.i.d. k={metrics.k})",
+        "  pass^k empirical  "
+        f"{_bar(metrics.pass_at_k_unbiased, width, color, ascii_only, 'fail')}  "
+        f"{metrics.pass_at_k_unbiased:.4f}  (unbiased; {passes}/{total} pass)",
     ]
     return "\n".join(lines)

@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from time import perf_counter
 
-from chorus.core.classify import classify_failure
+from chorus.core.classify import classify_trajectory
+from chorus.core.divergence import build_divergence_overlay
 from chorus.core.events import Event, EventRecorder, EventType, new_id
-from chorus.core.judge import DeterministicJudge
-from chorus.core.metrics import reliability_metrics
+from chorus.core.judge import DeterministicJudge, judge_run
 from chorus.core.ports import AgentPort, StoragePort
+from chorus.core.results import result_from_events
 from chorus.core.types import RunResult, TaskSpec, TrajectoryResult
 from chorus.gateway.tool_gateway import ReplayDivergenceError, ToolCallable, ToolGateway
 
@@ -86,15 +88,24 @@ class RunConductor:
         else:
             trajectories = tuple([await self._run_one(task, run_id, index) for index in range(n)])
 
-        metrics = reliability_metrics(trajectories)
-        verdict = "pass" if all(item.outcome == "pass" for item in trajectories) else "fail"
-        result = RunResult(
-            run_id=run_id,
-            task_id=task.task_id,
-            trajectories=trajectories,
-            metrics=metrics,
-            escalations=0,
-            verdict=verdict,
+        del trajectories
+        events = list(await self._storage.read_events())
+        result = result_from_events(events, run_id=run_id, task_id=task.task_id)
+        overlay = build_divergence_overlay(events)
+        judgment = judge_run(result, task, divergence_step=overlay.divergence_step)
+        result = replace(
+            result,
+            verdict=judgment.verdict,  # type: ignore[arg-type]
+            escalations=judgment.escalations,
+            judge_summary={
+                "resolved_tier": judgment.resolved_tier,
+                "tier_hits": judgment.tier_hits,
+                "tier2_calls": judgment.tier2_calls,
+                "cascade_cost_usd": judgment.cascade_cost_usd,
+                "baseline_cost_usd": judgment.baseline_cost_usd,
+                "cost_ratio": judgment.cost_ratio,
+            },
+            escalation_trace=judgment.escalation_trace,
         )
         await run_recorder.emit(
             EventType.RUN_FINISHED,
@@ -102,8 +113,11 @@ class RunConductor:
                 "task_id": task.task_id,
                 "verdict": result.verdict,
                 "pass_at_1": result.metrics.pass_at_1,
-                "pass_at_k": result.metrics.pass_at_k,
+                "pass_hat_k_projected": result.metrics.pass_at_k,
+                "pass_hat_k_unbiased": result.metrics.pass_at_k_unbiased,
                 "wilson_ci": result.metrics.wilson_ci,
+                "divergence_step": overlay.divergence_step,
+                "judge_summary": result.judge_summary,
             },
         )
         return result
@@ -114,18 +128,26 @@ class RunConductor:
         await recorder.emit(EventType.TRAJECTORY_STARTED, {"task_id": task.task_id, "index": index})
 
         gateway = ToolGateway.record(
-            recorder=recorder, tools=self._tools, capture_content=self._capture_content
+            recorder=recorder,
+            tools=self._tools,
+            capture_content=self._capture_content,
+            task=task,
         )
         start = perf_counter()
-        error: BaseException | None = None
         output = ""
         try:
             output = await self._agent_for(index).run(task, gateway)
             outcome = await self._judge.judge(task, output)
         except BaseException as exc:  # noqa: BLE001 - the harness must survive any agent fault
-            error = exc
             outcome = "error"
             output = str(exc)
+        trajectory_events = [
+            event
+            for event in await self._storage.read_events()
+            if event.trajectory_id == trajectory_id
+        ]
+        if outcome == "pass" and _has_failed_contract_check(trajectory_events):
+            outcome = "fail"
 
         wall_ms = (perf_counter() - start) * 1000
         # Prefer the gateway's aggregate (simulated model latency + measured tool
@@ -137,15 +159,32 @@ class RunConductor:
             + gateway.input_tokens * self._price_per_input_token
             + gateway.output_tokens * self._price_per_output_token
         )
-        failure_class = None if outcome == "pass" else classify_failure(error)
-
         await recorder.emit(
             EventType.CONTRACT_CHECK,
-            {"task_id": task.task_id, "accepted": outcome == "pass", "output": output},
+            {
+                "task_id": task.task_id,
+                "result": "pass" if outcome == "pass" else "fail",
+                "accepted": outcome == "pass",
+                "output": output,
+                "step": gateway.current_step_index,
+            },
         )
+        trajectory_events = [
+            event
+            for event in await self._storage.read_events()
+            if event.trajectory_id == trajectory_id
+        ]
+        diagnosis = None if outcome == "pass" else classify_trajectory(trajectory_events, task=task)
         await recorder.emit(
             EventType.VERDICT,
-            {"outcome": outcome, "output": output, "failure_class": failure_class},
+            {
+                "outcome": outcome,
+                "output": output,
+                "failure_class": diagnosis.cls if diagnosis else None,
+                "failure_step": diagnosis.step if diagnosis else None,
+                "failure_detail": diagnosis.detail if diagnosis else None,
+                "failure_confidence": diagnosis.confidence if diagnosis else None,
+            },
         )
         await recorder.emit(
             EventType.TRAJECTORY_FINISHED,
@@ -156,9 +195,12 @@ class RunConductor:
             trajectory_id=trajectory_id,
             outcome=outcome,
             output=output,
-            failure_class=failure_class,
+            failure_class=diagnosis.cls if diagnosis else None,
             cost_usd=cost_usd,
             latency_ms=latency_ms,
+            failure_step=diagnosis.step if diagnosis else None,
+            failure_detail=diagnosis.detail if diagnosis else None,
+            failure_confidence=diagnosis.confidence if diagnosis else None,
         )
 
     async def replay(
@@ -214,3 +256,10 @@ def _recorded_outcome(events: list[Event]) -> str:
         if event.type == EventType.VERDICT:
             return str(event.payload.get("outcome", "pass"))
     return "pass"
+
+
+def _has_failed_contract_check(events: list[Event]) -> bool:
+    return any(
+        event.type == EventType.CONTRACT_CHECK and not bool(event.payload.get("accepted", True))
+        for event in events
+    )

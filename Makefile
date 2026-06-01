@@ -23,7 +23,7 @@ replay:
 	chorus replay --event-log .chorus/demo.jsonl
 
 run:
-	chorus run --n 12 --success-rate 0.7 --error-rate 0.1 --seed 7
+	chorus run --n 30 --success-rate 0.7 --error-rate 0.1 --seed 7
 
 trace:
-	chorus trace --n 12 --seed 7 --replay
+	chorus trace --n 30 --seed 7 --replay
