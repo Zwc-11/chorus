@@ -20,8 +20,9 @@ from chorus.adapters.agents.fake import FakeAgent, fake_tools
 from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochastic_tools
 from chorus.adapters.storage.baseline import BaselineStore
 from chorus.adapters.storage.jsonl import JsonlEventStore
-from chorus.benchmarks.loader import load_suite
+from chorus.benchmarks.loader import load_suite, suite_version_for
 from chorus.benchmarks.scaffold import Scaffold, run_suite
+from chorus.benchmarks.swebench import BenchmarkDataUnavailable
 from chorus.core.conductor import RunConductor
 from chorus.core.events import Event, EventType
 from chorus.core.regression import baseline_set_report, regression_verdict
@@ -287,7 +288,26 @@ def gate(
 ) -> None:
     """Run the suite and gate on a *statistical* regression vs the stored baseline."""
 
-    tasks = load_suite(suite)
+    try:
+        tasks = load_suite(suite)
+    except BenchmarkDataUnavailable as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    if suite != "synthetic":
+        # The built-in scaffold is the seeded StochasticAgent: it demonstrates the
+        # gate mechanics deterministically but does not *solve* anything. Driving a
+        # real benchmark through it would emit a pass^k that looks like a result and
+        # is not -- exactly the fabricated number the locked decisions forbid. The
+        # loader is real (the tasks are genuine); the headline run needs a real
+        # AgentPort + test evaluator wired in here first.
+        typer.echo(
+            f"Suite {suite!r} loaded {len(tasks)} real tasks, but the built-in stochastic "
+            "scaffold cannot evaluate them. Wire a real AgentPort + test evaluator to run it "
+            "(this is the headline-benchmark step). Refusing to emit a synthetic pass^k for a "
+            "real benchmark.",
+            err=True,
+        )
+        raise typer.Exit(2)
     resolved_branch = branch or _detect_branch()
     scaffold_spec = Scaffold(name=scaffold, success_delta=success_delta, error_rate=error_rate)
     candidate = asyncio.run(
@@ -298,6 +318,7 @@ def gate(
             seed=seed,
             branch=resolved_branch,
             commit=_detect_commit(),
+            suite_version=suite_version_for(suite),
         )
     )
     store = BaselineStore(baseline_dir)

@@ -5,13 +5,17 @@
 so the regression gate has a real multi-task distribution to bootstrap over,
 deterministically and with no model cost.
 
-Real benchmarks are a drop-in: a ``swe-bench-verified`` / ``terminal-bench`` loader
-returns ``TaskSpec``s the same way (with an acceptance contract per task), and the
-same gate runs against a real model behind the ``AgentPort``.
+Real benchmarks are a drop-in behind the same seam: ``load_suite("swe-bench-verified")``
+returns the public SWE-bench Verified instances as ``TaskSpec``s (with each task's
+test-based acceptance contract in metadata), and the same gate runs against a real
+model behind the ``AgentPort``. ``suite_version_for(name)`` gives the baseline key
+that suite is stored under, so a SWE-bench baseline never collides with a synthetic
+one.
 """
 
 from __future__ import annotations
 
+from chorus.benchmarks import swebench
 from chorus.core.types import TaskSpec
 
 SUITE_VERSION = "synthetic-v1"
@@ -46,10 +50,24 @@ def synthetic_suite() -> list[TaskSpec]:
     ]
 
 
-def load_suite(name: str = "synthetic") -> list[TaskSpec]:
+def load_suite(name: str = "synthetic", *, subset_size: int | None = None) -> list[TaskSpec]:
     if name == "synthetic":
         return synthetic_suite()
+    if name in (swebench.SUITE_NAME, "swebench", "swe-bench"):
+        return swebench.load_swebench_verified(
+            subset_size=swebench.resolve_subset_size(subset_size)
+        )
     raise ValueError(
-        f"unknown suite {name!r}; only 'synthetic' is built in. "
-        "Real benchmarks (swe-bench-verified, terminal-bench) plug in here."
+        f"unknown suite {name!r}; known suites: 'synthetic', '{swebench.SUITE_NAME}'. "
+        "Add a loader here to plug in another benchmark (e.g. terminal-bench)."
     )
+
+
+def suite_version_for(name: str = "synthetic", *, subset_size: int | None = None) -> str:
+    """Baseline key for a suite -- part of the (branch, suite, N) comparison conditions."""
+
+    if name == "synthetic":
+        return SUITE_VERSION
+    if name in (swebench.SUITE_NAME, "swebench", "swe-bench"):
+        return swebench.suite_version(swebench.resolve_subset_size(subset_size))
+    raise ValueError(f"unknown suite {name!r}")

@@ -46,8 +46,10 @@ diagnosis path, and the Phase 5 CI gate from
 - Statistical CI gate: a baseline store, a paired-delta bootstrap regression test
   (`regressed` / `improved` / `inconclusive`, seeded and deterministic), a
   per-failure-class PR comment, and a composite GitHub Action wrapping it.
-- Benchmark seam: a `load_suite` / `Scaffold` interface — a synthetic suite today,
-  a real benchmark (SWE-bench Verified / Terminal-Bench) as a drop-in.
+- Benchmark seam: a `load_suite` / `Scaffold` interface with two loaders — the
+  deterministic synthetic suite, and a real **SWE-bench Verified** loader that maps
+  instances to `TaskSpec`s (problem statement → prompt; `FAIL_TO_PASS` /
+  `PASS_TO_PASS` test contract → metadata) over a deterministic subset.
 - CLI commands to record/replay a dummy run, fan out a stochastic run, render
   trace/fan HTML artifacts, and gate a candidate against a baseline.
 - Tests proving replay, event-log projection, metric math, divergence detection,
@@ -144,12 +146,27 @@ is seeded, so the verdict is stable. The composite GitHub Action in
 [chorus/ci/action.yml](chorus/ci/action.yml) wraps this command, posts the report
 as a PR comment, and sets the check status.
 
+Load the real SWE-bench Verified task set behind the same seam:
+
+```bash
+# from a local dump of princeton-nlp/SWE-bench_Verified, or `pip install datasets`
+CHORUS_SWEBENCH_PATH=swebench_verified.jsonl \
+  chorus gate --suite swe-bench-verified --n 5
+```
+
+The loader maps each instance to a `TaskSpec` (problem statement → prompt, the
+`FAIL_TO_PASS` / `PASS_TO_PASS` tests → an acceptance contract in metadata) over a
+deterministic subset. The gate deliberately **refuses** to run these through the
+built-in stochastic scaffold — that would emit a `pass^k` that *looks* like a
+benchmark result and isn't. Producing the real number is the next step below.
+
 > **Headline benchmark number — intentionally absent.** The synthetic suite above
 > demonstrates the gate *mechanics* deterministically and at zero model cost. The
-> résumé-grade number ("changing only the scaffold moved pass^5 from X to Y on
-> SWE-bench Verified") requires a real model and benchmark harness; it is a
-> documented drop-in behind the `load_suite` / `Scaffold` seam and is left blank
-> rather than filled with a placeholder.
+> SWE-bench Verified **task loader** is implemented; the résumé-grade *number*
+> ("changing only the scaffold moved pass^5 from X to Y on SWE-bench Verified")
+> additionally requires a real model behind `AgentPort` and the SWE-bench test
+> evaluator. That run is left undone rather than filled with a placeholder — the
+> one locked rule is *the number is real or absent*.
 
 ## GitHub
 
