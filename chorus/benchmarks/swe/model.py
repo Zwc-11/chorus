@@ -66,6 +66,11 @@ class AnthropicPatchModel:
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._client = None
 
+    def ensure_ready(self) -> None:
+        """Preflight: raise BenchDependencyMissing now if the key/SDK are absent."""
+
+        self._ensure_client()
+
     def _ensure_client(self):
         if self._client is not None:
             return self._client

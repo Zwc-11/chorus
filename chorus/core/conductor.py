@@ -23,7 +23,7 @@ from chorus.core.classify import classify_trajectory
 from chorus.core.divergence import build_divergence_overlay
 from chorus.core.events import Event, EventRecorder, EventType, new_id
 from chorus.core.judge import DeterministicJudge, judge_run
-from chorus.core.ports import AgentPort, StoragePort
+from chorus.core.ports import AgentPort, JudgePort, StoragePort
 from chorus.core.results import result_from_events
 from chorus.core.types import RunResult, TaskSpec, TrajectoryResult
 from chorus.gateway.tool_gateway import ReplayDivergenceError, ToolCallable, ToolGateway
@@ -45,6 +45,7 @@ class RunConductor:
         agent_factory: Callable[[int], AgentPort] | None = None,
         storage: StoragePort,
         tools: dict[str, ToolCallable] | None = None,
+        judge: JudgePort | None = None,
         concurrent: bool = True,
         capture_content: bool = False,
         price_per_tool_call: float = DEFAULT_PRICE_PER_TOOL_CALL,
@@ -62,7 +63,10 @@ class RunConductor:
         self._price_per_tool_call = price_per_tool_call
         self._price_per_input_token = price_per_input_token
         self._price_per_output_token = price_per_output_token
-        self._judge = DeterministicJudge()
+        # The judge decides each trajectory's outcome from the agent's output. It
+        # defaults to the Tier-0 contract check; a real suite injects an evaluator
+        # (e.g. the SWE-bench test harness) that actually runs the candidate.
+        self._judge = judge or DeterministicJudge()
 
     def _agent_for(self, index: int) -> AgentPort:
         if self._agent_factory is not None:

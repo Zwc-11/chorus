@@ -22,7 +22,8 @@ from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochast
 from chorus.adapters.storage.baseline import BaselineStore
 from chorus.adapters.storage.jsonl import JsonlEventStore
 from chorus.benchmarks.loader import load_suite, suite_version_for
-from chorus.benchmarks.scaffold import Scaffold, run_suite
+from chorus.benchmarks.scaffold import Scaffold, run_judged_suite, run_suite
+from chorus.benchmarks.swe.types import BenchDependencyMissing
 from chorus.benchmarks.swebench import BenchmarkDataUnavailable
 from chorus.core.conductor import RunConductor
 from chorus.core.events import Event, EventType
@@ -259,6 +260,51 @@ def _detect_commit() -> str:
     return os.environ.get("GITHUB_SHA", "")[:7] or _git("rev-parse", "--short", "HEAD", default="")
 
 
+async def _run_real_suite(
+    tasks,
+    *,
+    suite: str,
+    scaffold: str,
+    model: str,
+    n: int,
+    seed: int,
+    branch: str,
+):
+    """Build a real SWE-bench AgentPort + JudgePort and run the judged suite.
+
+    Preflights the model and evaluator dependencies so a missing API key or Docker
+    fails fast with a clear error instead of silently turning every trajectory into
+    an ``error`` outcome (the conductor swallows agent faults by design).
+    """
+
+    from chorus.adapters.agents.swe import SwePatchAgent
+    from chorus.benchmarks.swe.evaluator import SubprocessSweEvaluator
+    from chorus.benchmarks.swe.judge import SweBenchJudge
+    from chorus.benchmarks.swe.model import DEFAULT_MODEL, AnthropicPatchModel
+
+    patch_model = AnthropicPatchModel(model=model or DEFAULT_MODEL)
+    evaluator = SubprocessSweEvaluator()
+    patch_model.ensure_ready()
+    evaluator.ensure_ready()
+
+    repair = scaffold == "self-repair"
+
+    def agent_factory(lane_seed: int) -> SwePatchAgent:
+        return SwePatchAgent(patch_model, repair=repair, seed=lane_seed)
+
+    return await run_judged_suite(
+        tasks,
+        agent_factory=agent_factory,
+        judge=SweBenchJudge(evaluator),
+        n=n,
+        seed=seed,
+        branch=branch,
+        suite_version=suite_version_for(suite),
+        scaffold="self-repair" if repair else "single-shot",
+        commit=_detect_commit(),
+    )
+
+
 @app.command()
 def gate(
     suite: Annotated[str, typer.Option(help="Benchmark suite to run.")] = "synthetic",
@@ -286,42 +332,62 @@ def gate(
         ".chorus/gate.md"
     ),
     boot_seed: Annotated[int, typer.Option(help="Bootstrap seed; keeps the verdict stable.")] = 0,
+    real_agent: Annotated[
+        bool,
+        typer.Option(
+            help="For a real suite: run a real AgentPort + SWE-bench JudgePort (needs deps)."
+        ),
+    ] = False,
+    model: Annotated[str, typer.Option(help="Model id for --real-agent.")] = "",
 ) -> None:
     """Run the suite and gate on a *statistical* regression vs the stored baseline."""
 
     try:
         tasks = load_suite(suite)
-    except BenchmarkDataUnavailable as exc:
+        resolved_branch = branch or _detect_branch()
+        if suite == "synthetic":
+            scaffold_spec = Scaffold(
+                name=scaffold, success_delta=success_delta, error_rate=error_rate
+            )
+            candidate = asyncio.run(
+                run_suite(
+                    tasks,
+                    scaffold=scaffold_spec,
+                    n=n,
+                    seed=seed,
+                    branch=resolved_branch,
+                    commit=_detect_commit(),
+                    suite_version=suite_version_for(suite),
+                )
+            )
+        elif real_agent:
+            candidate = asyncio.run(
+                _run_real_suite(
+                    tasks,
+                    suite=suite,
+                    scaffold=scaffold,
+                    model=model,
+                    n=n,
+                    seed=seed,
+                    branch=resolved_branch,
+                )
+            )
+        else:
+            # The synthetic scaffold cannot *solve* a real benchmark; emitting a
+            # pass^k for it would be the fabricated number the locked decisions
+            # forbid. Pass --real-agent to run a real AgentPort + SWE-bench judge.
+            typer.echo(
+                f"Suite {suite!r} loaded {len(tasks)} real tasks. Re-run with --real-agent to "
+                "evaluate them with a real AgentPort + SWE-bench JudgePort (needs "
+                "ANTHROPIC_API_KEY + Docker + the 'bench' extra). Refusing to emit a synthetic "
+                "pass^k for a real benchmark.",
+                err=True,
+            )
+            raise typer.Exit(2)
+    except (BenchmarkDataUnavailable, BenchDependencyMissing) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
-    if suite != "synthetic":
-        # The built-in scaffold is the seeded StochasticAgent: it demonstrates the
-        # gate mechanics deterministically but does not *solve* anything. Driving a
-        # real benchmark through it would emit a pass^k that looks like a result and
-        # is not -- exactly the fabricated number the locked decisions forbid. The
-        # loader is real (the tasks are genuine); the headline run needs a real
-        # AgentPort + test evaluator wired in here first.
-        typer.echo(
-            f"Suite {suite!r} loaded {len(tasks)} real tasks, but the built-in stochastic "
-            "scaffold cannot evaluate them. Wire a real AgentPort + test evaluator to run it "
-            "(this is the headline-benchmark step). Refusing to emit a synthetic pass^k for a "
-            "real benchmark.",
-            err=True,
-        )
-        raise typer.Exit(2)
-    resolved_branch = branch or _detect_branch()
-    scaffold_spec = Scaffold(name=scaffold, success_delta=success_delta, error_rate=error_rate)
-    candidate = asyncio.run(
-        run_suite(
-            tasks,
-            scaffold=scaffold_spec,
-            n=n,
-            seed=seed,
-            branch=resolved_branch,
-            commit=_detect_commit(),
-            suite_version=suite_version_for(suite),
-        )
-    )
+
     store = BaselineStore(baseline_dir)
     baseline = store.load(resolved_branch, candidate.suite_version, n)
 
@@ -376,7 +442,6 @@ def bench(
     from chorus.benchmarks.swe.model import DEFAULT_MODEL, AnthropicPatchModel
     from chorus.benchmarks.swe.runner import compare_scaffolds, run_scaffold
     from chorus.benchmarks.swe.scaffold import BUILTIN_SCAFFOLDS
-    from chorus.benchmarks.swe.types import BenchDependencyMissing
     from chorus.report.swe_md import render_benchmark_report
 
     for name in (scaffold_a, scaffold_b):

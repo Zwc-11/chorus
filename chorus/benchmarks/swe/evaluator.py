@@ -115,6 +115,11 @@ class SubprocessSweEvaluator:
         report = self._load_report(run_id)
         return parse_report(report, [p.instance_id for p in predictions])
 
+    def ensure_ready(self) -> None:
+        """Preflight: raise BenchDependencyMissing now if swebench is absent."""
+
+        self._ensure_swebench()
+
     def _ensure_swebench(self) -> None:
         try:
             import swebench  # noqa: F401

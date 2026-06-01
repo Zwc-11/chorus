@@ -51,12 +51,18 @@ diagnosis path, and the Phase 5 CI gate from
   deterministic synthetic suite, and a real **SWE-bench Verified** loader that maps
   instances to `TaskSpec`s (problem statement → prompt; `FAIL_TO_PASS` /
   `PASS_TO_PASS` test contract → metadata) over a deterministic subset.
-- SWE-bench harness-only evaluation (`chorus bench`): runs a fixed model under two
-  scaffolds (`single-shot` vs `self-repair`), evaluates patches with the official
-  SWE-bench Docker harness, and folds resolved/not into the same `SuiteResult` and
-  `pass^k` machinery the gate uses — so the headline number and the CI gate share
-  one code path. The wiring is complete and tested with fakes; the number itself
-  needs `ANTHROPIC_API_KEY` + Docker (see below).
+- Real SWE-bench evaluation along **two paths**, both holding the model fixed and
+  varying only the scaffold (`single-shot` vs `self-repair`):
+  - **Integrated** — `SwePatchAgent` implements the existing `AgentPort` and
+    `SweBenchJudge` implements `JudgePort`; the conductor's judge is injectable, so
+    a real run flows through the harness and inherits tracing, replay, divergence,
+    and per-step diagnosis (`chorus gate --suite swe-bench-verified --real-agent`).
+    Per-trajectory Docker eval — right for small/debug N.
+  - **Batch** — `chorus bench` evaluates all patches in one parallel harness run for
+    the headline number at scale (faster, but not traced).
+  Both fold resolved/not into the same `SuiteResult` + `pass^k` machinery the gate
+  uses. The wiring is complete and tested with fakes; the numbers need
+  `ANTHROPIC_API_KEY` + Docker (see below).
 - CLI commands to record/replay a dummy run, fan out a stochastic run, render
   trace/fan HTML artifacts, gate a candidate against a baseline, and run the
   SWE-bench harness-only comparison.
@@ -188,6 +194,14 @@ the report states the claim from measured numbers:
 scaffold A  single-shot   pass@1 0.31  Wilson95 [0.23, 0.41]  pass^5 0.18
 scaffold B  self-repair   pass@1 0.39  Wilson95 [0.30, 0.49]  pass^5 0.27
 verdict     IMPROVED  (Δpass^5 +0.09, 95% CI [+0.02, +0.16])
+```
+
+Or run the **integrated** path, which routes a real SWE-bench run through the
+conductor so it inherits tracing, replay, and per-step diagnosis (per-trajectory
+Docker eval; use a small N):
+
+```bash
+chorus gate --suite swe-bench-verified --real-agent --scaffold self-repair --n 5
 ```
 
 *(Illustrative layout — the figures above are not a measured result.)* The harness
