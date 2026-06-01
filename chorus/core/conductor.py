@@ -1,12 +1,21 @@
 """Run conductor.
 
-This file is the orchestrator for Phase 0. It starts a run, launches one or
-more trajectories, records events, asks the judge for outcomes, and can replay
-a recorded trajectory to catch divergence.
+This file is the orchestrator. It starts a run, fans out ``N`` trajectories,
+records every step as events, asks the judge for outcomes, aggregates the
+distribution-aware metrics, and can replay a recorded trajectory to catch
+divergence.
+
+Trajectories fan out concurrently with ``asyncio``. Each trajectory gets its own
+agent instance (via ``agent_factory``) so a flaky agent can be seeded
+independently per lane; a single shared ``agent`` is reused across lanes for the
+deterministic case. Concurrency never affects a verdict: every lane records to
+its own append-only event stream and measures its own latency.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from time import perf_counter
 
 from chorus.core.classify import classify_failure
@@ -17,6 +26,9 @@ from chorus.core.ports import AgentPort, StoragePort
 from chorus.core.types import RunResult, TaskSpec, TrajectoryResult
 from chorus.gateway.tool_gateway import ReplayDivergenceError, ToolCallable, ToolGateway
 
+# Flat per-tool-call price used to turn recorded steps into a simulated cost.
+DEFAULT_PRICE_PER_TOOL_CALL = 0.002
+
 
 class RunConductor:
     """Coordinates agent execution without knowing concrete storage, tool, or judge adapters."""
@@ -24,14 +36,28 @@ class RunConductor:
     def __init__(
         self,
         *,
-        agent: AgentPort,
+        agent: AgentPort | None = None,
+        agent_factory: Callable[[int], AgentPort] | None = None,
         storage: StoragePort,
         tools: dict[str, ToolCallable] | None = None,
+        concurrent: bool = True,
+        price_per_tool_call: float = DEFAULT_PRICE_PER_TOOL_CALL,
     ) -> None:
+        if agent is None and agent_factory is None:
+            raise ValueError("provide either agent or agent_factory")
         self._agent = agent
+        self._agent_factory = agent_factory
         self._storage = storage
         self._tools = tools or {}
+        self._concurrent = concurrent
+        self._price_per_tool_call = price_per_tool_call
         self._judge = DeterministicJudge()
+
+    def _agent_for(self, index: int) -> AgentPort:
+        if self._agent_factory is not None:
+            return self._agent_factory(index)
+        assert self._agent is not None  # guaranteed by __init__
+        return self._agent
 
     async def run(self, task: TaskSpec, n: int = 1) -> RunResult:
         if n < 1:
@@ -44,17 +70,19 @@ class RunConductor:
             {"task_id": task.task_id, "n": n, "metadata": task.metadata},
         )
 
-        trajectories: list[TrajectoryResult] = []
-        for index in range(n):
-            trajectories.append(await self._run_one(task, run_id, index))
+        if self._concurrent and n > 1:
+            trajectories = tuple(
+                await asyncio.gather(*(self._run_one(task, run_id, index) for index in range(n)))
+            )
+        else:
+            trajectories = tuple([await self._run_one(task, run_id, index) for index in range(n)])
 
-        trajectory_tuple = tuple(trajectories)
-        metrics = reliability_metrics(trajectory_tuple)
-        verdict = "pass" if all(item.outcome == "pass" for item in trajectory_tuple) else "fail"
+        metrics = reliability_metrics(trajectories)
+        verdict = "pass" if all(item.outcome == "pass" for item in trajectories) else "fail"
         result = RunResult(
             run_id=run_id,
             task_id=task.task_id,
-            trajectories=trajectory_tuple,
+            trajectories=trajectories,
             metrics=metrics,
             escalations=0,
             verdict=verdict,
@@ -64,6 +92,7 @@ class RunConductor:
             {
                 "task_id": task.task_id,
                 "verdict": result.verdict,
+                "pass_at_1": result.metrics.pass_at_1,
                 "pass_at_k": result.metrics.pass_at_k,
                 "wilson_ci": result.metrics.wilson_ci,
             },
@@ -80,14 +109,15 @@ class RunConductor:
         error: BaseException | None = None
         output = ""
         try:
-            output = await self._agent.run(task, gateway)
+            output = await self._agent_for(index).run(task, gateway)
             outcome = await self._judge.judge(task, output)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - the harness must survive any agent fault
             error = exc
             outcome = "error"
             output = str(exc)
 
         latency_ms = (perf_counter() - start) * 1000
+        cost_usd = gateway.tool_call_count * self._price_per_tool_call
         failure_class = None if outcome == "pass" else classify_failure(error)
 
         await recorder.emit(
@@ -100,7 +130,7 @@ class RunConductor:
         )
         await recorder.emit(
             EventType.TRAJECTORY_FINISHED,
-            {"outcome": outcome, "cost_usd": 0.0, "latency_ms": latency_ms},
+            {"outcome": outcome, "cost_usd": cost_usd, "latency_ms": latency_ms},
         )
 
         return TrajectoryResult(
@@ -108,7 +138,7 @@ class RunConductor:
             outcome=outcome,
             output=output,
             failure_class=failure_class,
-            cost_usd=0.0,
+            cost_usd=cost_usd,
             latency_ms=latency_ms,
         )
 
@@ -118,11 +148,12 @@ class RunConductor:
         events: list[Event],
         task: TaskSpec,
         trajectory_id: str | None = None,
+        index: int = 0,
     ) -> str:
         replay_events = _events_for_trajectory(events, trajectory_id)
         expected_output = _expected_output(replay_events)
         gateway = ToolGateway.replay(replay_events)
-        output = await self._agent.run(task, gateway)
+        output = await self._agent_for(index).run(task, gateway)
         if output != expected_output:
             raise ReplayDivergenceError(
                 f"replay output diverged: expected {expected_output!r}, got {output!r}"

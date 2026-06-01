@@ -2,7 +2,7 @@
 # These targets wrap the exact Python commands we expect contributors to run.
 PYTHON ?= python
 
-.PHONY: install test lint format demo replay
+.PHONY: install test lint format demo replay run
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -21,3 +21,6 @@ demo:
 
 replay:
 	chorus replay --event-log .chorus/demo.jsonl
+
+run:
+	chorus run --n 12 --success-rate 0.7 --error-rate 0.1 --seed 7

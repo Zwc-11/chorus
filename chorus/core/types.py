@@ -40,6 +40,7 @@ class TrajectoryResult:
 class ReliabilityMetrics:
     pass_at_1: float
     pass_at_k: float
+    k: int
     variance: float
     wilson_ci: tuple[float, float]
     mean_cost: float

@@ -43,6 +43,13 @@ class ToolGateway:
             if event.type in {EventType.TOOL_CALL, EventType.TOOL_RESULT}
         ]
         self._replay_index = 0
+        self._tool_call_count = 0
+
+    @property
+    def tool_call_count(self) -> int:
+        """Number of tool calls made through this gateway (one trajectory's steps)."""
+
+        return self._tool_call_count
 
     @classmethod
     def record(cls, *, recorder: EventRecorder, tools: dict[str, ToolCallable]) -> ToolGateway:
@@ -63,6 +70,7 @@ class ToolGateway:
         if name not in self._tools:
             raise KeyError(f"tool {name!r} is not registered")
 
+        self._tool_call_count += 1
         command_hash = hash_payload({"tool": name, "args": args})
         await self._recorder.emit(
             EventType.TOOL_CALL,
@@ -85,7 +93,7 @@ class ToolGateway:
         if call_event.payload["tool"] != name or expected_hash != actual_hash:
             raise ReplayDivergenceError(
                 f"tool call diverged: expected {call_event.payload!r}, got "
-                f"{ {'tool': name, 'args': args, 'command_hash': actual_hash}!r }"
+                f"{ {'tool': name, 'args': args, 'command_hash': actual_hash}!r}"
             )
 
         result_event = self._next_replay_event(EventType.TOOL_RESULT)
