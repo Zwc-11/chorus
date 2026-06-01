@@ -45,13 +45,27 @@ diagnosis path, and the Phase 5 CI gate from
   diagnosis.
 - Statistical CI gate: a baseline store, a paired-delta bootstrap regression test
   (`regressed` / `improved` / `inconclusive`, seeded and deterministic), a
-  per-failure-class PR comment, and a composite GitHub Action wrapping it.
+  per-failure-class PR comment, and a composite GitHub Action wrapping it —
+  [demonstrated blocking a real regression on PR #2](https://github.com/Zwc-11/chorus/pull/2).
 - Benchmark seam: a `load_suite` / `Scaffold` interface with two loaders — the
   deterministic synthetic suite, and a real **SWE-bench Verified** loader that maps
   instances to `TaskSpec`s (problem statement → prompt; `FAIL_TO_PASS` /
   `PASS_TO_PASS` test contract → metadata) over a deterministic subset.
+- Real SWE-bench evaluation along **two paths**, both holding the model fixed and
+  varying only the scaffold (`single-shot` vs `self-repair`):
+  - **Integrated** — `SwePatchAgent` implements the existing `AgentPort` and
+    `SweBenchJudge` implements `JudgePort`; the conductor's judge is injectable, so
+    a real run flows through the harness and inherits tracing, replay, divergence,
+    and per-step diagnosis (`chorus gate --suite swe-bench-verified --real-agent`).
+    Per-trajectory Docker eval — right for small/debug N.
+  - **Batch** — `chorus bench` evaluates all patches in one parallel harness run for
+    the headline number at scale (faster, but not traced).
+  Both fold resolved/not into the same `SuiteResult` + `pass^k` machinery the gate
+  uses. The wiring is complete and tested with fakes; the numbers need
+  `ANTHROPIC_API_KEY` + Docker (see below).
 - CLI commands to record/replay a dummy run, fan out a stochastic run, render
-  trace/fan HTML artifacts, and gate a candidate against a baseline.
+  trace/fan HTML artifacts, gate a candidate against a baseline, and run the
+  SWE-bench harness-only comparison.
 - Tests proving replay, event-log projection, metric math, divergence detection,
   judgment gating, judge caching, failure classification, the three gate verdicts,
   and seed reproducibility.
@@ -158,15 +172,50 @@ The loader maps each instance to a `TaskSpec` (problem statement → prompt, the
 `FAIL_TO_PASS` / `PASS_TO_PASS` tests → an acceptance contract in metadata) over a
 deterministic subset. The gate deliberately **refuses** to run these through the
 built-in stochastic scaffold — that would emit a `pass^k` that *looks* like a
-benchmark result and isn't. Producing the real number is the next step below.
+benchmark result and isn't. Producing the real number is `chorus bench`, below.
 
-> **Headline benchmark number — intentionally absent.** The synthetic suite above
-> demonstrates the gate *mechanics* deterministically and at zero model cost. The
-> SWE-bench Verified **task loader** is implemented; the résumé-grade *number*
-> ("changing only the scaffold moved pass^5 from X to Y on SWE-bench Verified")
-> additionally requires a real model behind `AgentPort` and the SWE-bench test
-> evaluator. That run is left undone rather than filled with a placeholder — the
-> one locked rule is *the number is real or absent*.
+Run the SWE-bench harness-only comparison (the headline number):
+
+```bash
+pip install -e '.[bench]'          # anthropic + datasets + swebench (needs Docker)
+export ANTHROPIC_API_KEY=sk-ant-…  # one model, held fixed across scaffolds
+chorus bench --subset 100 --n 10 --k 5 \
+  --scaffold-a single-shot --scaffold-b self-repair
+```
+
+This holds one model fixed and varies **only the scaffold**: scaffold A is a
+single model call, scaffold B adds one self-review/repair turn — the only
+difference, so the `pass^k` delta is attributable to the harness. Each attempt's
+patch is evaluated by the official SWE-bench Docker harness; resolved/not folds
+into the same `SuiteResult` + `pass^k` + paired-delta machinery the gate uses, and
+the report states the claim from measured numbers:
+
+```text
+scaffold A  single-shot   pass@1 0.31  Wilson95 [0.23, 0.41]  pass^5 0.18
+scaffold B  self-repair   pass@1 0.39  Wilson95 [0.30, 0.49]  pass^5 0.27
+verdict     IMPROVED  (Δpass^5 +0.09, 95% CI [+0.02, +0.16])
+```
+
+Or run the **integrated** path, which routes a real SWE-bench run through the
+conductor so it inherits tracing, replay, and per-step diagnosis (per-trajectory
+Docker eval; use a small N):
+
+```bash
+chorus gate --suite swe-bench-verified --real-agent --scaffold self-repair --n 5
+```
+
+*(Illustrative layout — the figures above are not a measured result.)* The harness
+**refuses to print a number unless a real model and Docker evaluation actually
+ran**; without them it exits with an actionable error rather than a placeholder.
+
+> **The harness is built; the measured number is the one remaining paid step.**
+> The wiring — model adapter (prompt-cached), the two scaffolds, the SWE-bench
+> evaluator, the runner, and the report — is complete and unit-tested with fakes
+> (no API, no Docker). What's left is *running* it: a frontier model plus the
+> SWE-bench Docker harness over a subset, which costs real money and compute (on
+> the order of $1–2k for a defensible 100-instance subset). Until that run
+> happens, the résumé line stops at "gates CI on statistical regression" — the one
+> locked rule is **the number is real or absent**.
 
 ## GitHub
 
