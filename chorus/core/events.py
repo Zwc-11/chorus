@@ -21,6 +21,7 @@ from chorus.core.ports import StoragePort
 class EventType(StrEnum):
     RUN_STARTED = "run_started"
     TRAJECTORY_STARTED = "trajectory_started"
+    STEP_STARTED = "step_started"
     MODEL_CALL = "model_call"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"

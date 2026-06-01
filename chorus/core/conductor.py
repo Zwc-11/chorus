@@ -26,8 +26,11 @@ from chorus.core.ports import AgentPort, StoragePort
 from chorus.core.types import RunResult, TaskSpec, TrajectoryResult
 from chorus.gateway.tool_gateway import ReplayDivergenceError, ToolCallable, ToolGateway
 
-# Flat per-tool-call price used to turn recorded steps into a simulated cost.
+# Prices used to turn recorded usage into a simulated cost. Token rates are in
+# USD per token (roughly $3 / $15 per million in/out).
 DEFAULT_PRICE_PER_TOOL_CALL = 0.002
+DEFAULT_PRICE_PER_INPUT_TOKEN = 3e-6
+DEFAULT_PRICE_PER_OUTPUT_TOKEN = 15e-6
 
 
 class RunConductor:
@@ -41,7 +44,10 @@ class RunConductor:
         storage: StoragePort,
         tools: dict[str, ToolCallable] | None = None,
         concurrent: bool = True,
+        capture_content: bool = False,
         price_per_tool_call: float = DEFAULT_PRICE_PER_TOOL_CALL,
+        price_per_input_token: float = DEFAULT_PRICE_PER_INPUT_TOKEN,
+        price_per_output_token: float = DEFAULT_PRICE_PER_OUTPUT_TOKEN,
     ) -> None:
         if agent is None and agent_factory is None:
             raise ValueError("provide either agent or agent_factory")
@@ -50,7 +56,10 @@ class RunConductor:
         self._storage = storage
         self._tools = tools or {}
         self._concurrent = concurrent
+        self._capture_content = capture_content
         self._price_per_tool_call = price_per_tool_call
+        self._price_per_input_token = price_per_input_token
+        self._price_per_output_token = price_per_output_token
         self._judge = DeterministicJudge()
 
     def _agent_for(self, index: int) -> AgentPort:
@@ -104,7 +113,9 @@ class RunConductor:
         recorder = EventRecorder(self._storage, run_id, trajectory_id)
         await recorder.emit(EventType.TRAJECTORY_STARTED, {"task_id": task.task_id, "index": index})
 
-        gateway = ToolGateway.record(recorder=recorder, tools=self._tools)
+        gateway = ToolGateway.record(
+            recorder=recorder, tools=self._tools, capture_content=self._capture_content
+        )
         start = perf_counter()
         error: BaseException | None = None
         output = ""
@@ -116,8 +127,16 @@ class RunConductor:
             outcome = "error"
             output = str(exc)
 
-        latency_ms = (perf_counter() - start) * 1000
-        cost_usd = gateway.tool_call_count * self._price_per_tool_call
+        wall_ms = (perf_counter() - start) * 1000
+        # Prefer the gateway's aggregate (simulated model latency + measured tool
+        # time) so the fan metrics and the Phase 1 trace share one duration; fall
+        # back to wall-clock for agents that make no instrumented model calls.
+        latency_ms = gateway.latency_ms or wall_ms
+        cost_usd = (
+            gateway.tool_call_count * self._price_per_tool_call
+            + gateway.input_tokens * self._price_per_input_token
+            + gateway.output_tokens * self._price_per_output_token
+        )
         failure_class = None if outcome == "pass" else classify_failure(error)
 
         await recorder.emit(
@@ -152,8 +171,22 @@ class RunConductor:
     ) -> str:
         replay_events = _events_for_trajectory(events, trajectory_id)
         expected_output = _expected_output(replay_events)
+        recorded_outcome = _recorded_outcome(replay_events)
         gateway = ToolGateway.replay(replay_events)
-        output = await self._agent_for(index).run(task, gateway)
+        try:
+            output = await self._agent_for(index).run(task, gateway)
+        except ReplayDivergenceError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - reproduce the recorded error path
+            if recorded_outcome == "error":
+                return str(exc)
+            raise ReplayDivergenceError(
+                f"replay raised unexpectedly for a {recorded_outcome!r} trajectory: {exc!r}"
+            ) from exc
+        if recorded_outcome == "error":
+            raise ReplayDivergenceError(
+                "expected the recorded error path but replay produced output"
+            )
         if output != expected_output:
             raise ReplayDivergenceError(
                 f"replay output diverged: expected {expected_output!r}, got {output!r}"
@@ -174,3 +207,10 @@ def _expected_output(events: list[Event]) -> str:
         if event.type == EventType.VERDICT:
             return str(event.payload["output"])
     raise ReplayDivergenceError("recorded trajectory has no verdict event")
+
+
+def _recorded_outcome(events: list[Event]) -> str:
+    for event in events:
+        if event.type == EventType.VERDICT:
+            return str(event.payload.get("outcome", "pass"))
+    return "pass"

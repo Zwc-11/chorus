@@ -9,6 +9,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
+from time import perf_counter
 from typing import Any
 
 from chorus.core.events import Event, EventRecorder, EventType, hash_payload
@@ -25,6 +26,10 @@ class ReplayDivergenceError(RuntimeError):
     """Raised when replayed execution differs from the recorded event path."""
 
 
+class ReplayedToolError(RuntimeError):
+    """Re-raised during replay to reproduce a tool failure recorded live."""
+
+
 class ToolGateway:
     def __init__(
         self,
@@ -33,17 +38,23 @@ class ToolGateway:
         recorder: EventRecorder | None = None,
         tools: dict[str, ToolCallable] | None = None,
         replay_events: list[Event] | None = None,
+        capture_content: bool = False,
     ) -> None:
         self._mode = mode
         self._recorder = recorder
         self._tools = tools or {}
+        self._capture_content = capture_content
         self._replay_events = [
             event
             for event in replay_events or []
-            if event.type in {EventType.TOOL_CALL, EventType.TOOL_RESULT}
+            if event.type in {EventType.MODEL_CALL, EventType.TOOL_CALL, EventType.TOOL_RESULT}
         ]
         self._replay_index = 0
         self._tool_call_count = 0
+        self._model_call_count = 0
+        self._input_tokens = 0
+        self._output_tokens = 0
+        self._latency_ms = 0.0
 
     @property
     def tool_call_count(self) -> int:
@@ -51,18 +62,116 @@ class ToolGateway:
 
         return self._tool_call_count
 
+    @property
+    def model_call_count(self) -> int:
+        """Number of model calls made through this gateway."""
+
+        return self._model_call_count
+
+    @property
+    def input_tokens(self) -> int:
+        return self._input_tokens
+
+    @property
+    def output_tokens(self) -> int:
+        return self._output_tokens
+
+    @property
+    def latency_ms(self) -> float:
+        """Aggregate duration: simulated model latency plus measured tool time."""
+
+        return self._latency_ms
+
     @classmethod
-    def record(cls, *, recorder: EventRecorder, tools: dict[str, ToolCallable]) -> ToolGateway:
-        return cls(mode=GatewayMode.RECORD, recorder=recorder, tools=tools)
+    def record(
+        cls,
+        *,
+        recorder: EventRecorder,
+        tools: dict[str, ToolCallable],
+        capture_content: bool = False,
+    ) -> ToolGateway:
+        return cls(
+            mode=GatewayMode.RECORD,
+            recorder=recorder,
+            tools=tools,
+            capture_content=capture_content,
+        )
 
     @classmethod
     def replay(cls, events: list[Event]) -> ToolGateway:
         return cls(mode=GatewayMode.REPLAY, replay_events=events)
 
+    async def step(self, *, index: int, phase: str = "act") -> None:
+        """Mark a step boundary. Structural only — recorded live, skipped on replay."""
+
+        if self._mode == GatewayMode.RECORD:
+            if self._recorder is None:
+                raise RuntimeError("record mode requires an event recorder")
+            await self._recorder.emit(EventType.STEP_STARTED, {"index": index, "phase": phase})
+
+    async def model(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        finish_reason: str = "stop",
+        latency_ms: float = 0.0,
+        content: str | None = None,
+    ) -> None:
+        """Record one model call's structural usage. Content is dropped unless captured."""
+
+        if self._mode == GatewayMode.RECORD:
+            return await self._record_model(
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                finish_reason=finish_reason,
+                latency_ms=latency_ms,
+                content=content,
+            )
+        self._replay_model(model)
+        return None
+
     async def call(self, name: str, args: dict[str, Any]) -> Any:
         if self._mode == GatewayMode.RECORD:
             return await self._record_call(name, args)
         return self._replay_call(name, args)
+
+    async def _record_model(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        finish_reason: str,
+        latency_ms: float,
+        content: str | None,
+    ) -> None:
+        if self._recorder is None:
+            raise RuntimeError("record mode requires an event recorder")
+        self._model_call_count += 1
+        self._input_tokens += input_tokens
+        self._output_tokens += output_tokens
+        self._latency_ms += latency_ms
+        payload: dict[str, Any] = {
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "finish_reason": finish_reason,
+            "latency_ms": latency_ms,
+        }
+        # Privacy: structural attributes always; generated text only when captured.
+        if self._capture_content and content is not None:
+            payload["content"] = content
+        await self._recorder.emit(EventType.MODEL_CALL, payload)
+
+    def _replay_model(self, model: str) -> None:
+        event = self._next_replay_event(EventType.MODEL_CALL)
+        if event.payload["model"] != model:
+            raise ReplayDivergenceError(
+                f"model call diverged: expected model {event.payload['model']!r}, got {model!r}"
+            )
 
     async def _record_call(self, name: str, args: dict[str, Any]) -> Any:
         if self._recorder is None:
@@ -77,12 +186,36 @@ class ToolGateway:
             {"tool": name, "args": args, "command_hash": command_hash},
         )
 
-        result = self._tools[name](args)
-        if inspect.isawaitable(result):
-            result = await result
+        start = perf_counter()
+        try:
+            result = self._tools[name](args)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            # Record the failure so the trajectory is replayable, then re-raise so
+            # the conductor sees the real error and classifies it.
+            latency_ms = (perf_counter() - start) * 1000
+            self._latency_ms += latency_ms
+            await self._recorder.emit(
+                EventType.TOOL_RESULT,
+                {
+                    "tool": name,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                    "latency_ms": latency_ms,
+                },
+            )
+            raise
+        latency_ms = (perf_counter() - start) * 1000
+        self._latency_ms += latency_ms
         await self._recorder.emit(
             EventType.TOOL_RESULT,
-            {"tool": name, "result": result, "result_hash": hash_payload(result)},
+            {
+                "tool": name,
+                "result": result,
+                "result_hash": hash_payload(result),
+                "latency_ms": latency_ms,
+            },
         )
         return result
 
@@ -102,6 +235,8 @@ class ToolGateway:
                 f"tool result diverged: expected tool {name!r}, got "
                 f"{result_event.payload['tool']!r}"
             )
+        if "error" in result_event.payload:
+            raise ReplayedToolError(result_event.payload["error"])
         return result_event.payload["result"]
 
     def _next_replay_event(self, event_type: EventType) -> Event:

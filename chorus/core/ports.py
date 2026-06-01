@@ -18,6 +18,21 @@ class ToolGatewayPort(Protocol):
     async def call(self, name: str, args: dict[str, Any]) -> Any:
         """Call a tool through the single record/replay choke point."""
 
+    async def step(self, *, index: int, phase: str = ...) -> None:
+        """Mark a step boundary in the trajectory."""
+
+    async def model(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        finish_reason: str = ...,
+        latency_ms: float = ...,
+        content: str | None = ...,
+    ) -> None:
+        """Record one model call's structural usage through the choke point."""
+
 
 class AgentPort(Protocol):
     async def run(self, task: TaskSpec, gateway: ToolGatewayPort) -> str:
@@ -33,8 +48,24 @@ class StoragePort(Protocol):
 
 
 class TracePort(Protocol):
-    async def emit(self, event: Event) -> None:
-        """Project one event into a trace backend."""
+    """Sink for projected spans. Adapters export to a backend; the core stays pure.
+
+    The core walks a projected trace and drives these methods; it never imports a
+    concrete tracing SDK. ``attrs`` are already ``gen_ai.*`` / ``chorus.*`` flat
+    key-value pairs produced by the event->span mapper.
+    """
+
+    def start_span(self, name: str, *, kind: str, attrs: dict[str, Any]) -> None:
+        """Open a span. Calls nest by start/end ordering."""
+
+    def set_status(self, status: str) -> None:
+        """Set the status (ok / error) of the most recently opened span."""
+
+    def end_span(self) -> None:
+        """Close the most recently opened span."""
+
+    def flush(self) -> None:
+        """Flush buffered spans to the backend."""
 
 
 class JudgePort(Protocol):
