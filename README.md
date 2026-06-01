@@ -16,8 +16,9 @@ storage, tracing, judges, and reports plug in through ports.
 
 ## Current slice
 
-This repo covers the Phase 0/1 core and the Phase 2-4 reliability, judgment, and
-diagnosis path from [docs/architecture.md](docs/architecture.md):
+This repo covers the Phase 0/1 core, the Phase 2-4 reliability, judgment, and
+diagnosis path, and the Phase 5 CI gate from
+[docs/architecture.md](docs/architecture.md):
 
 - Pure core domain types and ports.
 - Append-only JSONL and in-memory event stores.
@@ -42,11 +43,16 @@ diagnosis path from [docs/architecture.md](docs/architecture.md):
 - Trajectory-fan visualizer: a terminal view and a standalone HTML/SVG report
   with reliability cards, decay curve, divergence overlay, judgment, and
   diagnosis.
-- CLI commands to record/replay a dummy run, fan out a stochastic run, and render
-  trace/fan HTML artifacts.
+- Statistical CI gate: a baseline store, a paired-delta bootstrap regression test
+  (`regressed` / `improved` / `inconclusive`, seeded and deterministic), a
+  per-failure-class PR comment, and a composite GitHub Action wrapping it.
+- Benchmark seam: a `load_suite` / `Scaffold` interface — a synthetic suite today,
+  a real benchmark (SWE-bench Verified / Terminal-Bench) as a drop-in.
+- CLI commands to record/replay a dummy run, fan out a stochastic run, render
+  trace/fan HTML artifacts, and gate a candidate against a baseline.
 - Tests proving replay, event-log projection, metric math, divergence detection,
-  judgment gating, judge caching, failure classification, and seed
-  reproducibility.
+  judgment gating, judge caching, failure classification, the three gate verdicts,
+  and seed reproducibility.
 
 ## Environment
 
@@ -111,6 +117,39 @@ chorus trace --n 30 --seed 7 --replay
 
 `--replay` re-executes every recorded trajectory through the replay gateway and
 confirms each reproduces exactly, marking the spans `chorus.replay=true`.
+
+Gate CI on a *statistical* regression (Phase 5):
+
+```bash
+chorus gate --branch main --n 20 --update-baseline                 # records the baseline
+chorus gate --branch main --n 20 --scaffold worse --success-delta -0.12   # a candidate
+```
+
+The gate runs a task suite, compares the candidate against the stored baseline on
+the same tasks/N/seed, and bootstraps a 95% CI on the per-task `pass^k` delta. It
+emits one of three verdicts and exits non-zero **only** on `regressed`:
+
+```text
+## Chorus reliability gate — REGRESSED ❌
+pass^5: 0.21 -> 0.07   (Δ -0.14, 95% CI [-0.21, -0.07])   <- below 0
+New failures by class (candidate vs baseline):
+  +16  contract_violation
+  +15  tool_error
+```
+
+`improved` (CI entirely above 0) and `inconclusive` (CI straddles 0 — "widen N")
+do not block. Blocking only on a statistically real regression — never on a raw
+dip — is what keeps the gate from crying wolf and getting disabled. The bootstrap
+is seeded, so the verdict is stable. The composite GitHub Action in
+[chorus/ci/action.yml](chorus/ci/action.yml) wraps this command, posts the report
+as a PR comment, and sets the check status.
+
+> **Headline benchmark number — intentionally absent.** The synthetic suite above
+> demonstrates the gate *mechanics* deterministically and at zero model cost. The
+> résumé-grade number ("changing only the scaffold moved pass^5 from X to Y on
+> SWE-bench Verified") requires a real model and benchmark harness; it is a
+> documented drop-in behind the `load_suite` / `Scaffold` seam and is left blank
+> rather than filled with a placeholder.
 
 ## GitHub
 

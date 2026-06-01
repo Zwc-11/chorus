@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -16,14 +18,19 @@ import typer
 
 from chorus.adapters.agents.fake import FakeAgent, fake_tools
 from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochastic_tools
+from chorus.adapters.storage.baseline import BaselineStore
 from chorus.adapters.storage.jsonl import JsonlEventStore
+from chorus.benchmarks.loader import load_suite
+from chorus.benchmarks.scaffold import Scaffold, run_suite
 from chorus.core.conductor import RunConductor
 from chorus.core.events import Event, EventType
+from chorus.core.regression import baseline_set_report, regression_verdict
 from chorus.core.types import TaskSpec
 from chorus.gateway.tool_gateway import ReplayDivergenceError
 from chorus.report.fan import render_fan
 from chorus.report.fan_html import write_fan_html
 from chorus.report.markdown import render_run_report
+from chorus.report.regression_md import render_regression_comment
 from chorus.report.trace_html import write_traces_html
 from chorus.trace.mapper import events_to_traces
 
@@ -227,3 +234,92 @@ def replay(
         typer.echo(f"Replay diverged: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Replay matched recorded output: {output}")
+
+
+def _git(*args: str, default: str = "") -> str:
+    try:
+        out = subprocess.run(["git", *args], capture_output=True, text=True, timeout=5, check=False)
+        return out.stdout.strip() or default
+    except (OSError, subprocess.SubprocessError):
+        return default
+
+
+def _detect_branch() -> str:
+    # In a GitHub PR the candidate's target branch is what we compare against.
+    return (
+        os.environ.get("GITHUB_BASE_REF")
+        or os.environ.get("GITHUB_REF_NAME")
+        or _git("rev-parse", "--abbrev-ref", "HEAD", default="local")
+    )
+
+
+def _detect_commit() -> str:
+    return os.environ.get("GITHUB_SHA", "")[:7] or _git("rev-parse", "--short", "HEAD", default="")
+
+
+@app.command()
+def gate(
+    suite: Annotated[str, typer.Option(help="Benchmark suite to run.")] = "synthetic",
+    n: Annotated[int, typer.Option(min=1, help="Trajectories per task.")] = 20,
+    seed: Annotated[int, typer.Option(help="Per-lane seed base; run is reproducible.")] = 7,
+    k: Annotated[int, typer.Option(min=1, help="Horizon for the pass^k delta.")] = 5,
+    scaffold: Annotated[
+        str, typer.Option(help="Candidate scaffold name (label only).")
+    ] = "baseline",
+    success_delta: Annotated[
+        float, typer.Option(help="Shift applied to every task's base difficulty.")
+    ] = 0.0,
+    error_rate: Annotated[float, typer.Option(min=0.0, max=1.0)] = 0.08,
+    branch: Annotated[
+        str | None, typer.Option(help="Baseline branch; auto-detected if unset.")
+    ] = None,
+    baseline_dir: Annotated[Path, typer.Option(help="Baseline store directory.")] = Path(
+        ".chorus/baselines"
+    ),
+    update_baseline: Annotated[
+        bool,
+        typer.Option(help="Persist this run as the baseline (use on the base branch / merge)."),
+    ] = False,
+    comment_out: Annotated[Path, typer.Option(help="Write the PR comment markdown here.")] = Path(
+        ".chorus/gate.md"
+    ),
+    boot_seed: Annotated[int, typer.Option(help="Bootstrap seed; keeps the verdict stable.")] = 0,
+) -> None:
+    """Run the suite and gate on a *statistical* regression vs the stored baseline."""
+
+    tasks = load_suite(suite)
+    resolved_branch = branch or _detect_branch()
+    scaffold_spec = Scaffold(name=scaffold, success_delta=success_delta, error_rate=error_rate)
+    candidate = asyncio.run(
+        run_suite(
+            tasks,
+            scaffold=scaffold_spec,
+            n=n,
+            seed=seed,
+            branch=resolved_branch,
+            commit=_detect_commit(),
+        )
+    )
+    store = BaselineStore(baseline_dir)
+    baseline = store.load(resolved_branch, candidate.suite_version, n)
+
+    if baseline is None:
+        report = baseline_set_report(candidate, k=k)
+        store.save(candidate)
+    else:
+        report = regression_verdict(
+            baseline,
+            candidate,
+            k=k,
+            seed=boot_seed,
+            baseline_ref=f"{baseline.branch}@{baseline.commit or 'baseline'}",
+        )
+        if update_baseline and not report.blocks:
+            store.save(candidate)
+
+    comment = render_regression_comment(report, suite_version=candidate.suite_version)
+    typer.echo(comment)
+    comment_out.parent.mkdir(parents=True, exist_ok=True)
+    comment_out.write_text(comment + "\n", encoding="utf-8")
+    typer.echo(f"\nComment written to {comment_out}")
+    raise typer.Exit(1 if report.blocks else 0)

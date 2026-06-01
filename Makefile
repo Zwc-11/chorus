@@ -2,7 +2,7 @@
 # These targets wrap the exact Python commands we expect contributors to run.
 PYTHON ?= python
 
-.PHONY: install test lint format demo replay run trace
+.PHONY: install test lint format demo replay run trace gate
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -27,3 +27,7 @@ run:
 
 trace:
 	chorus trace --n 30 --seed 7 --replay
+
+gate:
+	chorus gate --branch main --n 20 --update-baseline
+	chorus gate --branch main --n 20 --scaffold worse --success-delta -0.12 --error-rate 0.12
