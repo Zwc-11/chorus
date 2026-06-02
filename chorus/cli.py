@@ -230,7 +230,23 @@ def trace(
         except OtelNotInstalled as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(2) from exc
-        typer.echo(f"Exported {len(traces)} traces over OTLP to {backend}.")
+
+        stats = port.export_stats()
+        if not stats.ok:
+            hint = (
+                " (check LANGSMITH_API_KEY)"
+                if backend == "langsmith"
+                else " (is the collector running?)"
+            )
+            typer.echo(
+                f"Export FAILED: {backend} rejected {stats.failed_batches} span batch(es); "
+                f"only {stats.ok_spans} spans accepted{hint}.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        typer.echo(
+            f"Exported {stats.ok_spans} spans ({len(traces)} traces) over OTLP to {backend}."
+        )
         if backend == "langsmith":
             resolved_project = os.environ.get("LANGSMITH_PROJECT", "chorus")
             typer.echo(
