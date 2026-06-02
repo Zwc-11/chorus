@@ -14,6 +14,7 @@ Chorus runs with no tracing dependency installed. Install with::
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -67,13 +68,26 @@ class OtelNotInstalled(RuntimeError):
     """Raised when the optional OpenTelemetry packages are not available."""
 
 
+@dataclass(frozen=True, slots=True)
+class ExportStats:
+    """Honest tally of what the OTLP backend actually accepted."""
+
+    ok_spans: int
+    ok_batches: int
+    failed_batches: int
+
+    @property
+    def ok(self) -> bool:
+        return self.failed_batches == 0
+
+
 def _require_otel() -> Any:
     try:
         from opentelemetry import context, trace
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise OtelNotInstalled(
             'OpenTelemetry is not installed. Install the extra: pip install "chorus-harness[otel]"'
@@ -85,7 +99,43 @@ def _require_otel() -> Any:
         Resource,
         TracerProvider,
         BatchSpanProcessor,
+        SpanExportResult,
     )
+
+
+class _CountingSpanExporter:
+    """Wraps a span exporter and records which batches the backend accepted.
+
+    The OTel SDK swallows export failures (it logs ``Failed to export span batch
+    code: 401`` and moves on), so the CLI could not tell a rejected export from a
+    real one. This delegates every ``export`` and tallies SUCCESS vs FAILURE so the
+    caller can report the truth and exit non-zero.
+    """
+
+    def __init__(self, inner: Any, success_result: Any) -> None:
+        self._inner = inner
+        self._success = success_result
+        self.ok_spans = 0
+        self.ok_batches = 0
+        self.failed_batches = 0
+
+    def export(self, spans: Any) -> Any:
+        result = self._inner.export(spans)
+        if result == self._success:
+            self.ok_batches += 1
+            self.ok_spans += len(spans)
+        else:
+            self.failed_batches += 1
+        return result
+
+    def shutdown(self) -> Any:
+        return self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> Any:
+        return self._inner.force_flush(timeout_millis)
+
+    def stats(self) -> ExportStats:
+        return ExportStats(self.ok_spans, self.ok_batches, self.failed_batches)
 
 
 def _langsmith_headers() -> dict[str, str]:
@@ -113,6 +163,7 @@ def build_otlp_trace_port(
         Resource,
         TracerProvider,
         BatchSpanProcessor,
+        SpanExportResult,
     ) = _require_otel()
 
     # Opt into the GenAI semconv explicitly so attribute names are stable.
@@ -125,7 +176,10 @@ def build_otlp_trace_port(
 
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=resolved_endpoint, headers=resolved_headers)
+    exporter = _CountingSpanExporter(
+        OTLPSpanExporter(endpoint=resolved_endpoint, headers=resolved_headers),
+        SpanExportResult.SUCCESS,
+    )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     tracer = provider.get_tracer("chorus.trace")
     return OtlpTracePort(
@@ -134,6 +188,7 @@ def build_otlp_trace_port(
         context=context,
         trace=trace,
         langsmith=backend == "langsmith",
+        exporter=exporter,
     )
 
 
@@ -147,14 +202,27 @@ class OtlpTracePort:
     """
 
     def __init__(
-        self, *, tracer: Any, provider: Any, context: Any, trace: Any, langsmith: bool = False
+        self,
+        *,
+        tracer: Any,
+        provider: Any,
+        context: Any,
+        trace: Any,
+        langsmith: bool = False,
+        exporter: _CountingSpanExporter | None = None,
     ) -> None:
         self._tracer = tracer
         self._provider = provider
         self._context = context
         self._trace = trace
         self._langsmith = langsmith
+        self._exporter = exporter
         self._stack: list[tuple[Any, Any, dict[str, Any]]] = []
+
+    def export_stats(self) -> ExportStats:
+        """What the backend actually accepted (after ``flush``)."""
+
+        return self._exporter.stats() if self._exporter else ExportStats(0, 0, 0)
 
     def start_span(self, name: str, *, kind: str, attrs: dict[str, Any]) -> None:
         span_attrs = dict(attrs)
