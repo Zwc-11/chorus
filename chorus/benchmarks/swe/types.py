@@ -27,6 +27,10 @@ class BenchDependencyMissing(RuntimeError):
     """A heavy optional dependency (anthropic / swebench / docker) is not available."""
 
 
+class BenchModelOutputError(BenchDependencyMissing):
+    """The model/provider returned a response that cannot be submitted to the harness."""
+
+
 @dataclass(frozen=True, slots=True)
 class ModelResponse:
     text: str

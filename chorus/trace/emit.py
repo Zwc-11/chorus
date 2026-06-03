@@ -34,9 +34,48 @@ def emit_trace(trace: Trace, port: TracePort) -> None:
 
     for root in roots:
         walk(root)
+    _emit_trace_metrics(trace, port)
     port.flush()
 
 
 def emit_traces(traces: list[Trace], port: TracePort) -> None:
     for trace in traces:
         emit_trace(trace, port)
+
+
+def _emit_trace_metrics(trace: Trace, port: TracePort) -> None:
+    for span in trace.spans:
+        common = {
+            "chorus.span.kind": span.kind,
+            "chorus.trace.id": trace.trace_id,
+            "chorus.run.id": trace.run_id,
+            "chorus.trajectory.id": trace.trajectory_id,
+        }
+        if span.duration_ms > 0:
+            port.record_metric(
+                "gen_ai.client.operation.duration",
+                span.duration_ms,
+                attrs={
+                    **common,
+                    "gen_ai.operation.name": span.attributes.get(
+                        "gen_ai.operation.name", span.kind
+                    ),
+                },
+            )
+        if span.kind == "model":
+            for token_type, attr in (
+                ("input", "gen_ai.usage.input_tokens"),
+                ("output", "gen_ai.usage.output_tokens"),
+            ):
+                value = float(span.attributes.get(attr, 0) or 0)
+                if value <= 0:
+                    continue
+                port.record_metric(
+                    "gen_ai.client.token.usage",
+                    value,
+                    attrs={
+                        **common,
+                        "gen_ai.request.model": span.attributes.get("gen_ai.request.model", ""),
+                        "gen_ai.token.type": token_type,
+                    },
+                )

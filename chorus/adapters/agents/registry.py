@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from chorus.core.ports import AgentPort, JudgePort
+from chorus.core.types import AgentAdapterCapabilities
 from chorus.gateway.tool_gateway import ToolCallable
 
 
@@ -42,6 +43,7 @@ class AgentModule:
     description: str
     build: Callable[..., BuiltAgent]
     simulated: bool = True  # True = free/no deps; False = needs key/Docker/extra
+    capabilities: AgentAdapterCapabilities = field(default_factory=AgentAdapterCapabilities)
 
 
 _REGISTRY: dict[str, AgentModule] = {}
@@ -83,13 +85,16 @@ def _build_stochastic(
 
 
 def _swe_builder(repair: bool) -> Callable[..., BuiltAgent]:
-    def build(*, model: str = "", **_: object) -> BuiltAgent:
+    def build(*, model: str = "", provider: str = "", **_: object) -> BuiltAgent:
         from chorus.adapters.agents.swe import SwePatchAgent
         from chorus.benchmarks.swe.evaluator import SubprocessSweEvaluator
         from chorus.benchmarks.swe.judge import SweBenchJudge
-        from chorus.benchmarks.swe.model import DEFAULT_MODEL, AnthropicPatchModel
+        from chorus.benchmarks.swe.providers import create_patch_model, default_model
 
-        patch_model = AnthropicPatchModel(model=model or DEFAULT_MODEL)
+        patch_model = create_patch_model(
+            provider=provider or None,
+            model=model or default_model(provider),
+        )
         evaluator = SubprocessSweEvaluator()
         patch_model.ensure_ready()
         evaluator.ensure_ready()
@@ -109,21 +114,78 @@ register(
         "Seeded simulated coding agent -- free, deterministic, no model call.",
         _build_stochastic,
         simulated=True,
+        capabilities=AgentAdapterCapabilities(
+            record=True,
+            replay=True,
+            live_execution=True,
+            tool_interception=True,
+        ),
     )
 )
 register(
     AgentModule(
         "swe-single-shot",
-        "Real model, one patch attempt (needs ANTHROPIC_API_KEY + Docker + the bench extra).",
+        (
+            "[legacy] Patch-only SWE-bench baseline; use contract-first fix-test for "
+            "public proof runs."
+        ),
         _swe_builder(repair=False),
         simulated=False,
+        capabilities=AgentAdapterCapabilities(
+            record=True,
+            live_execution=True,
+            sandbox=True,
+        ),
+    )
+)
+
+
+def _build_deepseek_website(*, model: str = "", provider: str = "", **_: object) -> BuiltAgent:
+    from chorus.adapters.agents.deepseek_coder import DeepSeekCodingAgent, coding_tools
+    from chorus.benchmarks.swe.providers import create_patch_model, default_model
+
+    patch_model = create_patch_model(
+        provider=provider or None,
+        model=model or default_model(provider),
+    )
+    patch_model.ensure_ready()
+    return BuiltAgent(
+        agent_factory=lambda lane: DeepSeekCodingAgent(patch_model, seed=lane),
+        tools=coding_tools(),
+        judge=None,
+        label="deepseek-v4-pro",
+    )
+
+
+register(
+    AgentModule(
+        "deepseek-website",
+        (
+            "DeepSeek v4 Pro + high reasoning -- builds the hard landing-site task "
+            "(DEEPSEEK_API_KEY)."
+        ),
+        _build_deepseek_website,
+        simulated=False,
+        capabilities=AgentAdapterCapabilities(
+            record=True,
+            live_execution=True,
+            tool_interception=True,
+        ),
     )
 )
 register(
     AgentModule(
         "swe-self-repair",
-        "Real model + one self-review turn (needs ANTHROPIC_API_KEY + Docker + the bench extra).",
+        (
+            "[legacy] Patch-only SWE-bench self-review baseline; use contract-first "
+            "fix-test for public proof runs."
+        ),
         _swe_builder(repair=True),
         simulated=False,
+        capabilities=AgentAdapterCapabilities(
+            record=True,
+            live_execution=True,
+            sandbox=True,
+        ),
     )
 )

@@ -33,7 +33,11 @@ def render_cliff_report(suite: SuiteResult, *, k: int = 5, agent_label: str = ""
         f"pass@1   {pass_at_1:.2f}   Wilson95 [{lo:.2f}, {hi:.2f}]"
         + ("      <- looks shippable on one run" if pass_at_1 >= 0.6 else ""),
         f"pass^{k}   {mean_pk:.2f}"
-        + (f"                        <- collapses across {k} runs (Δ -{drop:.2f})" if cliff else ""),
+        + (
+            f"                        <- collapses across {k} runs (Δ -{drop:.2f})"
+            if cliff
+            else ""
+        ),
         "```",
     ]
 
@@ -49,7 +53,10 @@ def render_cliff_report(suite: SuiteResult, *, k: int = 5, agent_label: str = ""
         lines.append("")
         lines.append(f"Worst tasks (lowest pass^{k}):")
         for task in worst:
-            lines.append(f"  {task.pass_hat_k(k):.2f}  {task.task_id}  ({task.passes}/{task.n} pass)")
+            lines.append(
+                f"  {task.pass_hat_k(k):.2f}  {task.task_id}  "
+                f"({task.passes}/{task.n} pass)"
+            )
 
     lines.append("")
     if cliff:

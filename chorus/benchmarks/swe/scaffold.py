@@ -37,11 +37,29 @@ _REPAIR_SYSTEM = (
 
 def _build_user(task: TaskSpec) -> str:
     meta = task.metadata
+    fail_to_pass = _format_tests("Failing tests to make pass", meta.get("fail_to_pass"))
+    pass_to_pass = _format_tests("Passing tests to keep passing", meta.get("pass_to_pass"))
     return (
         f"Repository: {meta.get('repo', '?')}\n"
         f"Base commit: {meta.get('base_commit', '?')}\n\n"
+        f"{fail_to_pass}"
+        f"{pass_to_pass}"
         f"Issue:\n{task.prompt}\n"
     )
+
+
+def _format_tests(label: str, tests: object) -> str:
+    if not tests:
+        return ""
+    if isinstance(tests, str):
+        values = [tests]
+    else:
+        try:
+            values = [str(item) for item in tests]  # type: ignore[union-attr]
+        except TypeError:
+            values = [str(tests)]
+    body = "\n".join(f"- {item}" for item in values)
+    return f"{label}:\n{body}\n\n"
 
 
 def extract_patch(text: str) -> str:

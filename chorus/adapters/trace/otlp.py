@@ -84,7 +84,10 @@ class ExportStats:
 def _require_otel() -> Any:
     try:
         from opentelemetry import context, trace
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
@@ -95,8 +98,11 @@ def _require_otel() -> Any:
     return (
         context,
         trace,
+        OTLPMetricExporter,
         OTLPSpanExporter,
         Resource,
+        MeterProvider,
+        PeriodicExportingMetricReader,
         TracerProvider,
         BatchSpanProcessor,
         SpanExportResult,
@@ -159,8 +165,11 @@ def build_otlp_trace_port(
     (
         context,
         trace,
+        OTLPMetricExporter,
         OTLPSpanExporter,
         Resource,
+        MeterProvider,
+        PeriodicExportingMetricReader,
         TracerProvider,
         BatchSpanProcessor,
         SpanExportResult,
@@ -182,9 +191,32 @@ def build_otlp_trace_port(
     )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     tracer = provider.get_tracer("chorus.trace")
+    meter_provider = None
+    token_histogram = None
+    duration_histogram = None
+    if backend != "langsmith":
+        metrics_endpoint = _metrics_endpoint(resolved_endpoint)
+        metric_reader = PeriodicExportingMetricReader(
+            OTLPMetricExporter(endpoint=metrics_endpoint, headers=resolved_headers)
+        )
+        meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        meter = meter_provider.get_meter("chorus.trace")
+        token_histogram = meter.create_histogram(
+            "gen_ai.client.token.usage",
+            unit="{token}",
+            description="Input and output token usage derived from Chorus spans.",
+        )
+        duration_histogram = meter.create_histogram(
+            "gen_ai.client.operation.duration",
+            unit="ms",
+            description="Operation duration derived from Chorus spans.",
+        )
     return OtlpTracePort(
         tracer=tracer,
         provider=provider,
+        meter_provider=meter_provider,
+        token_histogram=token_histogram,
+        duration_histogram=duration_histogram,
         context=context,
         trace=trace,
         langsmith=backend == "langsmith",
@@ -208,11 +240,17 @@ class OtlpTracePort:
         provider: Any,
         context: Any,
         trace: Any,
+        meter_provider: Any | None = None,
+        token_histogram: Any | None = None,
+        duration_histogram: Any | None = None,
         langsmith: bool = False,
         exporter: _CountingSpanExporter | None = None,
     ) -> None:
         self._tracer = tracer
         self._provider = provider
+        self._meter_provider = meter_provider
+        self._token_histogram = token_histogram
+        self._duration_histogram = duration_histogram
         self._context = context
         self._trace = trace
         self._langsmith = langsmith
@@ -255,8 +293,19 @@ class OtlpTracePort:
         self._context.detach(token)
         span.end()
 
+    def record_metric(self, name: str, value: float, *, attrs: dict[str, Any]) -> None:
+        histogram = {
+            "gen_ai.client.token.usage": self._token_histogram,
+            "gen_ai.client.operation.duration": self._duration_histogram,
+        }.get(name)
+        if histogram is None:
+            return
+        histogram.record(value, attributes=_otel_attrs(attrs))
+
     def flush(self) -> None:
         self._provider.force_flush()
+        if self._meter_provider is not None:
+            self._meter_provider.force_flush()
 
 
 def _otel_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
@@ -275,3 +324,9 @@ def _otel_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
         else:
             clean[key] = str(value)
     return clean
+
+
+def _metrics_endpoint(trace_endpoint: str) -> str:
+    if trace_endpoint.endswith("/v1/traces"):
+        return trace_endpoint[: -len("/v1/traces")] + "/v1/metrics"
+    return trace_endpoint

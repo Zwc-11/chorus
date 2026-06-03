@@ -20,11 +20,19 @@ class CollectedSpan:
     attributes: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class CollectedMetric:
+    name: str
+    value: float
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+
 class InMemoryTraceCollector:
     """A ``TracePort`` that keeps spans in memory."""
 
     def __init__(self) -> None:
         self.spans: list[CollectedSpan] = []
+        self.metrics: list[CollectedMetric] = []
         self._stack: list[CollectedSpan] = []
         self.flushed = False
 
@@ -41,6 +49,9 @@ class InMemoryTraceCollector:
     def end_span(self) -> None:
         if self._stack:
             self._stack.pop()
+
+    def record_metric(self, name: str, value: float, *, attrs: dict[str, Any]) -> None:
+        self.metrics.append(CollectedMetric(name=name, value=value, attributes=dict(attrs)))
 
     def flush(self) -> None:
         self.flushed = True

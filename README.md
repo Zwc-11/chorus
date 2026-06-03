@@ -5,10 +5,10 @@ right now, and the commands needed to install, test, and run the local demo.
 
 # Chorus
 
-Chorus is an open-source reliability and cost harness for coding agents. It runs
-an agent many times per task, records every step as neutral events, judges
-outcomes independently, and eventually gates CI on statistical regression instead
-of one noisy run.
+Chorus is a contract and proof layer for AI-generated code changes. It turns a
+coding task into an enforceable engineering contract, runs an agent through
+policy-controlled tools in an isolated workspace, verifies the resulting diff
+with tests and file/diff rules, and emits a PR-ready proof package.
 
 The architecture is Python-first. The core is hexagonal: the domain owns
 contracts, events, replay, metrics, and run orchestration; models, agents,
@@ -16,10 +16,19 @@ storage, tracing, judges, and reports plug in through ports.
 
 ## Current slice
 
-This repo covers the Phase 0/1 core, the Phase 2-4 reliability, judgment, and
-diagnosis path, and the Phase 5 CI gate from
-[docs/architecture.md](docs/architecture.md):
+This repo now includes the contract-first MVP plus the earlier reliability,
+trace, judgment, and CI-gate machinery from [docs/architecture.md](docs/architecture.md):
 
+- Contract-first `fix-test` execution: reproduce a failing command, compile a
+  typed YAML contract, run a policy-controlled agent, verify the diff, and write
+  `contract.yaml`, `events.jsonl`, `diff.patch`, `proof.md`, `report.html`, and
+  `summary.json` under `.chorus/runs/<run_id>/`.
+- Contract utility commands: `chorus contract create`, `chorus contract check`,
+  and `chorus run-contract`.
+- Policy-controlled typed tools: `list_files`, `search`, `read_file`,
+  `apply_patch`, `run_test`, `git_diff`, and `finish`; `.env`, secrets,
+  destructive shell, network/dependency installs, pushes, and unknown edit paths
+  are denied by default.
 - Pure core domain types and ports.
 - Append-only JSONL and in-memory event stores.
 - Tool gateway with record and replay modes.
@@ -40,6 +49,12 @@ diagnosis path, and the Phase 5 CI gate from
 - Diagnosis: step-boundary schema checks, deterministic-first failure taxonomy,
   trace stamping with `chorus.failure.class` / `chorus.failure.step`, and
   validation metrics for injected failures.
+- Structured contract diagnostics: acceptance checks can now emit stable
+  predicate IDs, evidence, and neutral repair hints while preserving the simple
+  boolean `task.accepts()` path.
+- Public SDK trace importers: OpenAI Agents SDK-style traces, Claude Code-style
+  transcripts/hooks, Google ADK-style traces, and LangGraph event streams can be
+  normalized into the same Chorus event log.
 - Trajectory-fan visualizer: a terminal view and a standalone HTML/SVG report
   with reliability cards, decay curve, divergence overlay, judgment, and
   diagnosis.
@@ -64,11 +79,32 @@ diagnosis path, and the Phase 5 CI gate from
   uses. The wiring is complete and tested with fakes; the numbers need
   `ANTHROPIC_API_KEY` + Docker (see below).
 - CLI commands to record/replay a dummy run, fan out a stochastic run, render
-  trace/fan HTML artifacts, gate a candidate against a baseline, and run the
-  SWE-bench harness-only comparison.
+  trace/fan HTML artifacts, initialize a project (`chorus init`), inspect agent
+  adapter capabilities (`chorus agents list`), gate a candidate against a
+  baseline, and run the SWE-bench harness-only comparison.
 - Tests proving replay, event-log projection, metric math, divergence detection,
   judgment gating, judge caching, failure classification, the three gate verdicts,
-  and seed reproducibility.
+  seed reproducibility, structured diagnostics, external trace import, and the
+  OSS adoption CLI surface.
+
+## Launch status
+
+Implemented and locally validated:
+
+- `pytest -q`
+- `ruff check chorus tests`
+- Free synthetic reliability and regression-gate demos.
+- Offline SWE-bench harness wiring with fake models/evaluators.
+- Public trace importers for observational integration demos.
+
+Not yet publicly validated:
+
+- A paid SWE/Terminal-style benchmark result with a real frontier model and
+  Docker evaluator. Chorus deliberately exits instead of printing a placeholder
+  number when those dependencies are absent.
+
+Start with [docs/quickstart.md](docs/quickstart.md). For CI wiring, see
+[docs/github-action.md](docs/github-action.md).
 
 ## Environment
 
@@ -87,6 +123,17 @@ Run the checks:
 pytest
 ruff check chorus tests
 ```
+
+Run the contract-first MVP on a failing test:
+
+```bash
+chorus fix-test --cmd "python -m pytest tests/test_checkout.py -q" --budget 0.50
+```
+
+This creates `.chorus/runs/<run_id>/contract.yaml`, `events.jsonl`,
+`diff.patch`, `proof.md`, `report.html`, and `summary.json`. The command fails
+closed if the failure cannot be reproduced or the final diff violates the
+contract.
 
 Run the Phase 0 record/replay demo:
 
@@ -189,11 +236,13 @@ The loader maps each instance to a `TaskSpec` (problem statement → prompt, the
 `FAIL_TO_PASS` / `PASS_TO_PASS` tests → an acceptance contract in metadata) over a
 deterministic subset. The gate deliberately **refuses** to run these through the
 built-in stochastic scaffold — that would emit a `pass^k` that *looks* like a
-benchmark result and isn't. Producing the real number is `chorus bench`, below.
+benchmark result and isn't. The old `chorus bench` patch-only path is deprecated;
+use `chorus fix-test` or `chorus run-contract` for public proof runs.
 
-Run the SWE-bench harness-only comparison (the headline number):
+Legacy SWE-bench harness-only comparison (internal evaluator seam):
 
 ```bash
+# Deprecated public path; retained only for internal/legacy evaluator work.
 pip install -e '.[bench]'          # anthropic + datasets + swebench (needs Docker)
 export ANTHROPIC_API_KEY=sk-ant-…  # one model, held fixed across scaffolds
 chorus bench --subset 100 --n 10 --k 5 \

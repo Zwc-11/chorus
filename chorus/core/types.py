@@ -13,6 +13,7 @@ Outcome = Literal["pass", "fail", "error"]
 JudgeOutcome = Literal["pass", "fail", "unknown"]
 RunVerdict = Literal["pass", "fail", "needs_more_evidence"]
 EscalationAction = Literal["repair", "strong_judge", "human_gate"]
+DiagnosticSeverity = Literal["info", "warning", "error"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,15 +25,77 @@ class TaskSpec:
     step_contracts: dict[int, StepBoundaryContract] = field(default_factory=dict)
 
     def accepts(self, output: str) -> bool:
-        if self.expected_output is None:
-            return True
-        return output.strip() == self.expected_output.strip()
+        from chorus.core.acceptance import task_accepts
+
+        return task_accepts(self, output)
 
 
 @dataclass(frozen=True, slots=True)
 class StepBoundaryContract:
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContractDiagnostic:
+    """Structured verdict evidence emitted by acceptance contracts.
+
+    The predicate id is the stable machine-readable part. The message and repair
+    hint are safe to show to an agent or a human without exposing hidden tests.
+    """
+
+    predicate_id: str
+    severity: DiagnosticSeverity
+    message: str
+    evidence: str = ""
+    repair_hint: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "predicate_id": self.predicate_id,
+            "severity": self.severity,
+            "message": self.message,
+            "evidence": self.evidence,
+            "repair_hint": self.repair_hint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContractDiagnostic:
+        return cls(
+            predicate_id=str(data["predicate_id"]),
+            severity=str(data.get("severity", "error")),  # type: ignore[arg-type]
+            message=str(data.get("message", "")),
+            evidence=str(data.get("evidence", "")),
+            repair_hint=str(data.get("repair_hint", "")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAdapterCapabilities:
+    """Declared integration surface for a third-party agent adapter."""
+
+    record: bool = False
+    replay: bool = False
+    hooks: bool = False
+    trace_import: bool = False
+    live_execution: bool = False
+    sandbox: bool = False
+    tool_interception: bool = False
+
+    def labels(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name, enabled in (
+                ("record", self.record),
+                ("replay", self.replay),
+                ("hooks", self.hooks),
+                ("trace-import", self.trace_import),
+                ("live", self.live_execution),
+                ("sandbox", self.sandbox),
+                ("tools", self.tool_interception),
+            )
+            if enabled
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,6 +18,7 @@ from chorus.adapters.trace.otlp import (
     LANGSMITH_APP_URL,
     _CountingSpanExporter,
     _langsmith_headers,
+    _metrics_endpoint,
     build_otlp_trace_port,
     langsmith_attributes,
     langsmith_project_url,
@@ -60,6 +61,11 @@ def test_project_url_is_well_formed_and_encoded() -> None:
     url = langsmith_project_url("my proj")
     assert url.startswith(LANGSMITH_APP_URL)
     assert "my%20proj" in url  # the project name is URL-encoded
+
+
+def test_phoenix_metrics_endpoint_is_derived_from_trace_endpoint() -> None:
+    assert _metrics_endpoint("http://localhost:6006/v1/traces").endswith("/v1/metrics")
+    assert _metrics_endpoint("http://collector/custom") == "http://collector/custom"
 
 
 def test_langsmith_attributes_mirror_chorus_to_metadata_and_kind() -> None:

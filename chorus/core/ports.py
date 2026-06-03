@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from chorus.core.events import Event
-    from chorus.core.types import RunResult, TaskSpec
+    from chorus.core.types import AgentAdapterCapabilities, RunResult, TaskSpec
 
 
 class ToolGatewayPort(Protocol):
@@ -83,6 +83,9 @@ class TracePort(Protocol):
     def end_span(self) -> None:
         """Close the most recently opened span."""
 
+    def record_metric(self, name: str, value: float, *, attrs: dict[str, Any]) -> None:
+        """Record an OTel metric point derived from the projected trace."""
+
     def flush(self) -> None:
         """Flush buffered spans to the backend."""
 
@@ -95,3 +98,20 @@ class JudgePort(Protocol):
 class ReportPort(Protocol):
     async def write(self, result: RunResult) -> str:
         """Write a report and return its location or body."""
+
+
+class ExternalTraceImporter(Protocol):
+    """Convert a provider/framework trace or transcript into Chorus events."""
+
+    source: str
+    capabilities: AgentAdapterCapabilities
+
+    def import_events(
+        self,
+        records: Sequence[dict[str, Any]],
+        *,
+        run_id: str,
+        task_id: str,
+        trajectory_id: str | None = None,
+    ) -> list[Event]:
+        """Return append-only events preserving the external trace order."""

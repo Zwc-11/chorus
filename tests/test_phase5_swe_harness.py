@@ -9,13 +9,16 @@ real model output and the real Docker evaluation -- those are the paid run itsel
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from chorus.benchmarks.swe.evaluator import parse_report, write_predictions
+from chorus.benchmarks.swe.evaluator import SubprocessSweEvaluator, parse_report, write_predictions
 from chorus.benchmarks.swe.runner import compare_scaffolds, run_scaffold
 from chorus.benchmarks.swe.scaffold import (
     SelfRepairScaffold,
     SingleShotScaffold,
+    _build_user,
     extract_patch,
 )
 from chorus.benchmarks.swe.types import (
@@ -23,11 +26,13 @@ from chorus.benchmarks.swe.types import (
     EVAL_ERROR,
     RESOLVED,
     TESTS_FAILED,
+    BenchDependencyMissing,
     ModelResponse,
     SweOutcome,
     SwePrediction,
 )
 from chorus.core.types import TaskSpec
+from chorus.report.swe_html import render_benchmark_html
 from chorus.report.swe_md import render_benchmark_report
 
 
@@ -77,6 +82,26 @@ def test_extract_patch_handles_fences_and_bare() -> None:
     assert extract_patch("```diff\n--- a\n+++ b\n```") == "--- a\n+++ b"
     assert extract_patch("```\n--- a\n+++ b\n```") == "--- a\n+++ b"
     assert extract_patch("--- a\n+++ b") == "--- a\n+++ b"
+
+
+def test_swe_prompt_includes_target_tests() -> None:
+    task = TaskSpec(
+        task_id="astropy__astropy-12907",
+        prompt="fix separability",
+        metadata={
+            "repo": "astropy/astropy",
+            "base_commit": "abc",
+            "fail_to_pass": ("astropy/modeling/tests/test_separable.py::test_nested",),
+            "pass_to_pass": ("astropy/modeling/tests/test_separable.py::test_coord_matrix",),
+        },
+    )
+
+    user = _build_user(task)
+
+    assert "Failing tests to make pass" in user
+    assert "test_nested" in user
+    assert "Passing tests to keep passing" in user
+    assert "test_coord_matrix" in user
 
 
 def test_single_shot_makes_one_call_self_repair_makes_two() -> None:
@@ -153,6 +178,50 @@ def test_write_predictions_uses_harness_schema(tmp_path) -> None:
     assert row == {"instance_id": "inst-1", "model_name_or_path": "chorus", "model_patch": "DIFF"}
 
 
+def test_swebench_preflight_explains_native_windows_import_failure(monkeypatch, tmp_path) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "swebench":
+            exc = ModuleNotFoundError("No module named 'resource'")
+            exc.name = "resource"
+            raise exc
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    evaluator = SubprocessSweEvaluator(run_dir=tmp_path)
+    with pytest.raises(BenchDependencyMissing, match="WSL/Linux"):
+        evaluator.ensure_ready()
+
+
+def test_subprocess_evaluator_passes_absolute_predictions_path(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, *, cwd, check, timeout):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["check"] = check
+        captured["timeout"] = timeout
+
+    evaluator = SubprocessSweEvaluator(run_dir=tmp_path / "runs")
+    monkeypatch.setattr(evaluator, "_ensure_swebench", lambda: None)
+    monkeypatch.setattr(evaluator, "_load_report", lambda run_id: {"resolved_ids": ["inst-1"]})
+    monkeypatch.setattr("chorus.benchmarks.swe.evaluator.subprocess.run", fake_run)
+
+    outcomes = evaluator.evaluate([SwePrediction("inst-1", "DIFF")], run_id="single-shot__a0")
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    predictions_path = cmd[cmd.index("--predictions_path") + 1]
+    assert Path(predictions_path).is_absolute()
+    assert Path(predictions_path).exists()
+    assert captured["cwd"] == tmp_path / "runs"
+    assert outcomes["inst-1"].resolved is True
+
+
 def test_benchmark_report_states_the_claim() -> None:
     tasks = [_task(f"t{i}") for i in range(6)]
     model = ScriptedModel()
@@ -169,3 +238,32 @@ def test_benchmark_report_states_the_claim() -> None:
     assert "single-shot" in text and "self-repair" in text
     assert "Claim:" in text
     assert "pass^5" in text
+
+
+def test_benchmark_html_report_surfaces_failures_and_tasks() -> None:
+    tasks = [_task("astropy__astropy-12907")]
+    model = ScriptedModel()
+    ref = run_scaffold(
+        tasks,
+        scaffold=SingleShotScaffold(),
+        model=model,
+        evaluator=ScriptedEvaluator(resolve=set(), category=EMPTY_PATCH),
+        n=1,
+        seed=0,
+    )
+    cand = run_scaffold(
+        tasks,
+        scaffold=SelfRepairScaffold(),
+        model=model,
+        evaluator=ScriptedEvaluator(resolve=set(), category=EMPTY_PATCH),
+        n=1,
+        seed=0,
+    )
+    comparison = compare_scaffolds(ref, cand, k=1)
+
+    html = render_benchmark_html(ref, cand, comparison, k=1, subset_label="subset1")
+
+    assert "SWE-bench harness-only comparison" in html
+    assert "INCONCLUSIVE" in html
+    assert "empty_patch" in html
+    assert "astropy__astropy-12907" in html

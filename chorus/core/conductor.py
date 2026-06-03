@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
 
+from chorus.core.acceptance import repair_feedback, task_diagnostics
 from chorus.core.classify import classify_trajectory
 from chorus.core.divergence import build_divergence_overlay
 from chorus.core.events import Event, EventRecorder, EventType, new_id
@@ -172,9 +173,11 @@ class RunConductor:
         events = [
             e for e in await self._storage.read_events() if e.trajectory_id == pending.trajectory_id
         ]
-        if outcome == "pass" and _has_failed_contract_check(events):
+        diagnostics = task_diagnostics(task, pending.output)
+        if outcome == "pass" and (_has_failed_contract_check(events) or diagnostics):
             outcome = "fail"
 
+        diagnostic_payload = [diagnostic.to_dict() for diagnostic in diagnostics]
         await pending.recorder.emit(
             EventType.CONTRACT_CHECK,
             {
@@ -183,6 +186,9 @@ class RunConductor:
                 "accepted": outcome == "pass",
                 "output": pending.output,
                 "step": pending.current_step,
+                "diagnostics": diagnostic_payload,
+                "diagnostic_ids": [item["predicate_id"] for item in diagnostic_payload],
+                "repair_feedback": repair_feedback(diagnostics) if diagnostics else "",
             },
         )
         events = [
