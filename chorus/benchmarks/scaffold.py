@@ -95,7 +95,7 @@ async def run_judged_suite(
     tasks: list[TaskSpec],
     *,
     agent_factory: Callable[[int], AgentPort],
-    judge: JudgePort,
+    judge: JudgePort | None = None,
     n: int,
     seed: int,
     branch: str,
