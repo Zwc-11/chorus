@@ -19,17 +19,22 @@ def verify_contract(
     target = sandbox.run(
         contract.task.command,
         timeout_s=contract.budget.max_runtime_seconds,
+        parser="pytest",
     )
-    target_passed = target.returncode == 0
+    target_passed = target.passed
     if not target_passed:
         failures.append("test_still_failing")
 
     related_outputs: dict[str, str] = {}
     related_passed = True
     for command in contract.required_proof.related_tests:
-        result = sandbox.run(command, timeout_s=contract.budget.max_runtime_seconds)
+        result = sandbox.run(
+            command,
+            timeout_s=contract.budget.max_runtime_seconds,
+            parser="pytest",
+        )
         related_outputs[command] = result.output
-        if result.returncode != 0:
+        if not result.passed:
             related_passed = False
             failures.append("related_test_regression")
 
@@ -38,7 +43,7 @@ def verify_contract(
     for command in contract.required_proof.static_checks:
         result = sandbox.run(command, timeout_s=contract.budget.max_runtime_seconds)
         static_outputs[command] = result.output
-        if result.returncode != 0:
+        if not result.passed:
             static_passed = False
             failures.append("static_check_failed")
 

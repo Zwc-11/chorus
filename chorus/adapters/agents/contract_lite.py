@@ -14,7 +14,7 @@ from chorus.domain.contract import Contract
 
 
 class ContractAgent(Protocol):
-    def run(self, *, contract: Contract, tools: ContractToolProxy) -> str:
+    def run(self, *, contract: Contract, tools: ContractToolProxy, feedback: str = "") -> str:
         """Run through typed tools and return a human review summary."""
 
 
@@ -22,7 +22,8 @@ class ContractAgent(Protocol):
 class ScriptedFixAgent:
     """Free deterministic demo agent for smoke tests and the first local demo."""
 
-    def run(self, *, contract: Contract, tools: ContractToolProxy) -> str:
+    def run(self, *, contract: Contract, tools: ContractToolProxy, feedback: str = "") -> str:
+        del feedback
         files = tools.call("list_files", {"glob": "**/*.py"})
         if not files.ok:
             return files.error
@@ -53,20 +54,22 @@ class ChorusLiteAgent:
         provider: str = "",
         model_id: str = "",
         max_steps: int = 12,
+        seed_offset: int = 0,
     ) -> None:
         self.model = model or create_patch_model(
             provider=provider or None,
             model=model_id or default_model(provider),
         )
         self.max_steps = max_steps
+        self.seed_offset = seed_offset
 
-    def run(self, *, contract: Contract, tools: ContractToolProxy) -> str:
-        transcript = _initial_observation(contract)
+    def run(self, *, contract: Contract, tools: ContractToolProxy, feedback: str = "") -> str:
+        transcript = _initial_observation(contract, feedback=feedback)
         for step in range(self.max_steps):
             response = self.model.complete(
                 system=_SYSTEM,
                 user=transcript,
-                seed=step,
+                seed=self.seed_offset + step,
             )
             tools.events.emit(
                 "model_call_finished",
@@ -111,11 +114,17 @@ Do not ask for tools outside the contract.
 """
 
 
-def build_contract_agent(*, agent: str, provider: str = "", model: str = "") -> ContractAgent:
+def build_contract_agent(
+    *,
+    agent: str,
+    provider: str = "",
+    model: str = "",
+    seed: int = 0,
+) -> ContractAgent:
     if agent == "scripted":
         return ScriptedFixAgent()
     if agent in {"chorus-lite", "lite"}:
-        return ChorusLiteAgent(provider=provider, model_id=model)
+        return ChorusLiteAgent(provider=provider, model_id=model, seed_offset=seed)
     raise KeyError("unknown contract agent; use 'scripted' or 'chorus-lite'")
 
 
@@ -142,13 +151,16 @@ def _unified(path: str, before: str, after: str) -> str:
     )
 
 
-def _initial_observation(contract: Contract) -> str:
-    return (
+def _initial_observation(contract: Contract, *, feedback: str = "") -> str:
+    observation = (
         f"Contract task: {contract.task.title}\n"
         f"Target command: {contract.task.command}\n"
         f"Allowed read: {contract.files.allow_read}\n"
         f"Allowed edit: {contract.files.allow_edit}\n"
     )
+    if feedback:
+        observation += f"\nPrevious test feedback:\n{feedback[:4000]}\n"
+    return observation
 
 
 def _parse_action(text: str) -> dict[str, Any] | None:

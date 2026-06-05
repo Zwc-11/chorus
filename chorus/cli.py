@@ -22,7 +22,14 @@ from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochast
 from chorus.adapters.storage.baseline import BaselineStore
 from chorus.adapters.storage.jsonl import JsonlEventStore
 from chorus.application.contract_compiler import compile_fix_test_contract
-from chorus.application.fix_test import proof_summary, run_contract, run_fix_test
+from chorus.application.fix_test import (
+    proof_summary,
+    run_contract,
+    run_fix_test,
+    validate_fix_test_workflow,
+)
+from chorus.application.workflow_planner import TEMPLATES, plan_from_task
+from chorus.application.workflow_runtime import WorkflowRuntime, explain_workflow
 from chorus.benchmarks.loader import load_suite, suite_version_for
 from chorus.benchmarks.scaffold import Scaffold, run_suite
 from chorus.benchmarks.swe.types import BenchDependencyMissing
@@ -33,10 +40,12 @@ from chorus.core.conductor import RunConductor
 from chorus.core.events import Event, EventType
 from chorus.core.regression import baseline_set_report, regression_verdict
 from chorus.domain.contract import Contract
+from chorus.domain.workflow import WorkflowPlan
 from chorus.gateway.tool_gateway import ReplayDivergenceError
 from chorus.report.fan import render_fan
 from chorus.report.fan_html import write_fan_html
 from chorus.report.markdown import render_run_report
+from chorus.report.murmur_workflow_html import write_murmur_workflow_html
 from chorus.report.regression_md import render_regression_comment
 from chorus.report.swe_html import write_benchmark_html
 from chorus.report.trace_html import write_traces_html
@@ -45,8 +54,10 @@ from chorus.trace.mapper import events_to_traces
 app = typer.Typer(no_args_is_help=True)
 agents_app = typer.Typer(help="List and exercise registered agent modules.")
 contract_app = typer.Typer(help="Create and validate Chorus engineering contracts.")
+workflow_app = typer.Typer(help="Create and validate Murmur workflow plans.")
 app.add_typer(agents_app, name="agents")
 app.add_typer(contract_app, name="contract")
+app.add_typer(workflow_app, name="workflow")
 
 
 @app.callback()
@@ -145,7 +156,15 @@ Useful commands:
 def _write_local_preview_index(root: Path) -> Path:
     """Write the small static launcher for generated local reports."""
 
+    write_murmur_workflow_html(root / "murmur.html")
+
     links = [
+        (
+            "murmur",
+            "Workflow tree",
+            "murmur.html",
+            "self-writing plan · agent fan-out · growing DAG visualization",
+        ),
         (
             "phase 2-4",
             "Reliability report",
@@ -272,6 +291,21 @@ def _write_local_preview_index(root: Path) -> Path:
     return out
 
 
+@app.command("murmur-preview")
+def murmur_preview(
+    out_dir: Annotated[
+        Path, typer.Option(help="Directory for murmur.html and index.html.")
+    ] = Path(".chorus/preview"),
+) -> None:
+    """Write the Murmur workflow tree demo and refresh the local preview index."""
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    html_out = write_murmur_workflow_html(out_dir / "murmur.html")
+    index_out = _write_local_preview_index(out_dir)
+    typer.echo(f"Murmur workflow UI written to {html_out}")
+    typer.echo(f"Preview index written to {index_out}")
+
+
 @app.command("fix-test")
 def fix_test(
     cmd: Annotated[str, typer.Option("--cmd", help="Failing test command to reproduce/fix.")],
@@ -285,6 +319,10 @@ def fix_test(
     ),
     provider: Annotated[str, typer.Option(help="Provider for chorus-lite.")] = "",
     model: Annotated[str, typer.Option(help="Model id for chorus-lite.")] = "",
+    n: Annotated[int, typer.Option(min=1, help="Number of isolated repair attempts.")] = 1,
+    max_repairs: Annotated[
+        int, typer.Option(min=0, help="Maximum repair iterations per failed attempt.")
+    ] = 0,
 ) -> None:
     """Run the contract-first failing-test repair workflow."""
 
@@ -297,6 +335,8 @@ def fix_test(
             agent_name=agent,
             provider=provider,
             model=model,
+            attempts=n,
+            max_repairs=max_repairs,
         )
     except (KeyError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
@@ -343,6 +383,146 @@ def contract_check(path: Annotated[Path, typer.Argument(help="Contract YAML path
             typer.echo(f"error: {issue}", err=True)
         raise typer.Exit(1)
     typer.echo(f"Contract OK: {path}")
+
+
+@workflow_app.command("check")
+def workflow_check(
+    path: Annotated[Path, typer.Argument(help="Murmur workflow YAML path.")],
+    contract_path: Annotated[
+        Path | None,
+        typer.Option("--contract", help="Optional contract YAML for fixed fix-test validation."),
+    ] = None,
+) -> None:
+    """Validate a Murmur workflow YAML file."""
+
+    workflow = WorkflowPlan.read(path)
+    issues = workflow.validate()
+    if issues:
+        for issue in issues:
+            typer.echo(f"error: {issue}", err=True)
+        raise typer.Exit(1)
+    if contract_path is not None:
+        contract = Contract.read(contract_path)
+        try:
+            validate_fix_test_workflow(workflow, contract=contract)
+        except RuntimeError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Workflow OK: {path}")
+
+
+@workflow_app.command("explain")
+def workflow_explain(
+    path: Annotated[Path, typer.Argument(help="Murmur workflow YAML path.")],
+) -> None:
+    """Print deterministic execution order, dependencies, and budgets."""
+
+    workflow = WorkflowPlan.read(path)
+    issues = workflow.validate()
+    if issues:
+        for issue in issues:
+            typer.echo(f"error: {issue}", err=True)
+        raise typer.Exit(1)
+    typer.echo(explain_workflow(workflow))
+
+
+@workflow_app.command("run")
+def workflow_run(
+    path: Annotated[Path, typer.Argument(help="Murmur workflow YAML path.")],
+    repo_root: Annotated[Path, typer.Option(help="Repository root to execute in.")] = Path("."),
+    out_dir: Annotated[Path, typer.Option(help="Root directory for workflow runs.")] = Path(
+        ".chorus/runs"
+    ),
+    contract_path: Annotated[
+        Path | None,
+        typer.Option("--contract", help="Optional contract YAML for policy-controlled exec nodes."),
+    ] = None,
+    resume: Annotated[bool, typer.Option(help="Reuse matching completed node evidence.")] = False,
+    concurrency: Annotated[int, typer.Option(min=1, help="Maximum ready nodes to schedule.")] = 1,
+    run_id: Annotated[
+        str,
+        typer.Option(help="Optional stable run id for deterministic resume."),
+    ] = "",
+) -> None:
+    """Execute a validated Murmur workflow plan."""
+
+    workflow = WorkflowPlan.read(path)
+    issues = workflow.validate()
+    if issues:
+        for issue in issues:
+            typer.echo(f"error: {issue}", err=True)
+        raise typer.Exit(1)
+    contract = Contract.read(contract_path) if contract_path is not None else None
+    if contract is not None:
+        contract_issues = contract.validate()
+        if contract_issues:
+            for issue in contract_issues:
+                typer.echo(f"error: {issue}", err=True)
+            raise typer.Exit(1)
+    runtime = WorkflowRuntime(
+        repo_root=repo_root,
+        out_root=out_dir,
+        contract=contract,
+        concurrency=concurrency,
+        resume=resume,
+    )
+    try:
+        result = runtime.run(workflow, run_id=run_id or None)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "run_id": result.run_id,
+                "status": result.status,
+                "run_dir": str(result.run_dir),
+                "nodes": len(result.node_results),
+            },
+            indent=2,
+        )
+    )
+    raise typer.Exit(0 if result.passed else 1)
+
+
+@app.command("plan")
+def plan_workflow(
+    task: Annotated[str, typer.Option("--task", help="Natural-language task for Murmur.")],
+    out: Annotated[Path, typer.Option(help="Workflow YAML output path.")] = Path(
+        ".chorus/workflows/murmur.yaml"
+    ),
+    template: Annotated[
+        str,
+        typer.Option(help=f"Workflow template: auto | {' | '.join(TEMPLATES)}."),
+    ] = "auto",
+    cmd: Annotated[
+        str,
+        typer.Option("--cmd", help="Optional objective command/test/backtest."),
+    ] = "",
+    n: Annotated[int, typer.Option(min=1, help="Number of candidates for coding templates.")] = 1,
+    max_repairs: Annotated[int, typer.Option(min=0, help="Repair loop budget.")] = 0,
+) -> None:
+    """Create a validated Murmur workflow from an approved template."""
+
+    try:
+        workflow = plan_from_task(
+            task=task,
+            template=template,
+            command=cmd,
+            attempts=n,
+            max_repairs=max_repairs,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    issues = workflow.validate()
+    if issues:
+        for issue in issues:
+            typer.echo(f"error: {issue}", err=True)
+        raise typer.Exit(1)
+    workflow.write(out)
+    typer.echo(f"Workflow written to {out}")
+    typer.echo(f"Template: {workflow.name}")
 
 
 @app.command("run-contract")

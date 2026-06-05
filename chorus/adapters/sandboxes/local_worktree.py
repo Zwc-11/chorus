@@ -5,22 +5,14 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+import sys
 from difflib import unified_diff
 from pathlib import Path
+from time import perf_counter
 
+from chorus.domain.tool import ExecResult
 
-@dataclass(frozen=True, slots=True)
-class CommandResult:
-    command: str
-    returncode: int
-    stdout: str
-    stderr: str
-    timeout: bool = False
-
-    @property
-    def output(self) -> str:
-        return (self.stdout + "\n" + self.stderr).strip()
+CommandResult = ExecResult
 
 
 class LocalWorktreeSandbox:
@@ -42,9 +34,19 @@ class LocalWorktreeSandbox:
         sandbox._snapshot = sandbox._read_snapshot()
         return sandbox
 
-    def run(self, command: str, *, timeout_s: int = 600) -> CommandResult:
+    def run(
+        self,
+        command: str,
+        *,
+        timeout_s: int = 600,
+        parser: str = "generic",
+    ) -> ExecResult:
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.root) + os.pathsep + env.get("PYTHONPATH", "")
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        if parser == "pytest":
+            env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " -s").strip()
+        start = perf_counter()
         try:
             proc = subprocess.run(
                 command,
@@ -56,14 +58,24 @@ class LocalWorktreeSandbox:
                 env=env,
                 check=False,
             )
-            return CommandResult(command, proc.returncode, proc.stdout, proc.stderr)
+            return _exec_result(
+                command=command,
+                returncode=proc.returncode,
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+                timeout=False,
+                latency_ms=_elapsed(start),
+                parser=parser,
+            )
         except subprocess.TimeoutExpired as exc:
-            return CommandResult(
-                command,
-                124,
-                exc.stdout or "",
-                exc.stderr or "",
+            return _exec_result(
+                command=command,
+                returncode=124,
+                stdout=exc.stdout or "",
+                stderr=exc.stderr or "",
                 timeout=True,
+                latency_ms=_elapsed(start),
+                parser=parser,
             )
 
     def list_files(self, pattern: str = "**/*") -> list[str]:
@@ -90,6 +102,7 @@ class LocalWorktreeSandbox:
         return results[:100]
 
     def apply_patch(self, patch: str) -> CommandResult:
+        start = perf_counter()
         proc = subprocess.run(
             ["git", "apply", "--whitespace=nowarn", "-"],
             cwd=self.root,
@@ -99,7 +112,15 @@ class LocalWorktreeSandbox:
             timeout=30,
             check=False,
         )
-        return CommandResult("git apply", proc.returncode, proc.stdout, proc.stderr)
+        return _exec_result(
+            command="git apply",
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            timeout=False,
+            latency_ms=_elapsed(start),
+            parser="generic",
+        )
 
     def git_diff(self) -> str:
         if (self.root / ".git").exists():
@@ -168,6 +189,55 @@ class LocalWorktreeSandbox:
                 unified_diff(before, after, fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm="")
             )
         return "\n".join(chunks)
+
+
+def _exec_result(
+    *,
+    command: str,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    timeout: bool,
+    latency_ms: float,
+    parser: str,
+) -> ExecResult:
+    output = (stdout + "\n" + stderr).strip()
+    failing_tests = _pytest_failures(output) if parser == "pytest" else ()
+    if timeout:
+        summary = "timed out"
+    elif returncode == 0:
+        summary = "passed"
+    elif failing_tests:
+        summary = "failed: " + ", ".join(failing_tests[:5])
+    else:
+        summary = f"exited {returncode}"
+    return ExecResult(
+        command=command,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        passed=returncode == 0 and not timeout,
+        timeout=timeout,
+        latency_ms=latency_ms,
+        summary=summary,
+        failing_tests=failing_tests,
+    )
+
+
+def _pytest_failures(output: str) -> tuple[str, ...]:
+    failures: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("FAILED ", "ERROR ")):
+            item = stripped.split(" - ", 1)[0]
+            parts = item.split(maxsplit=1)
+            if len(parts) == 2:
+                failures.append(parts[1])
+    return tuple(dict.fromkeys(failures))
+
+
+def _elapsed(start: float) -> float:
+    return (perf_counter() - start) * 1000
 
 
 def _copy_tree(source: Path, dest: Path) -> None:

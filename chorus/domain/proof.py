@@ -20,6 +20,7 @@ class ProofPackage:
     tool_calls: int
     cost_usd: float
     summary: str = ""
+    attempts: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

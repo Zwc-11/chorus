@@ -22,12 +22,18 @@ def document_head(*, title: str, extra_css: str = "") -> str:
 </head>"""
 
 
-def document_close(*, extra_script: str = "") -> str:
+def document_close(*, extra_script: str = "", extra_module_script: str = "") -> str:
+    module_block = ""
+    if extra_module_script:
+        module_block = f"""
+<script type="module">
+{extra_module_script}
+</script>"""
     return f"""{chorus_modal_markup()}
 <script>
 {chorus_ui_js()}
 {extra_script}
-</script>
+</script>{module_block}
 </body>
 </html>"""
 
@@ -562,8 +568,12 @@ def chorus_ui_js() -> str:
   const bodyEl = document.getElementById("chorus-modal-body");
   if (!backdrop || !modal) return;
 
-  const closeMs = () =>
-    parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--modal-close-dur")) || 150;
+  const closeMs = () => {
+    const raw = getComputedStyle(document.documentElement)
+      .getPropertyValue("--modal-close-dur")
+      .trim();
+    return parseFloat(raw) || 150;
+  };
 
   function openModal(title, html) {
     titleEl.textContent = title;
@@ -572,8 +582,8 @@ def chorus_ui_js() -> str:
     modal.classList.remove("is-closing");
     backdrop.classList.remove("is-closing");
     requestAnimationFrame(() => {
-      backdrop.classList.add("is-open");
       modal.classList.add("is-open");
+      backdrop.classList.add("is-open");
     });
     document.body.style.overflow = "hidden";
   }
@@ -583,14 +593,13 @@ def chorus_ui_js() -> str:
     backdrop.classList.remove("is-open");
     modal.classList.add("is-closing");
     backdrop.classList.add("is-closing");
-    const ms = closeMs();
     setTimeout(() => {
       modal.classList.remove("is-closing");
       backdrop.classList.remove("is-closing");
       backdrop.hidden = true;
       bodyEl.innerHTML = "";
       document.body.style.overflow = "";
-    }, ms);
+    }, closeMs());
   }
 
   window.chorusOpenModal = openModal;

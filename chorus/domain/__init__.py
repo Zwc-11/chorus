@@ -12,13 +12,15 @@ from chorus.domain.contract import (
 )
 from chorus.domain.policy import PolicyDecision
 from chorus.domain.proof import ProofPackage
-from chorus.domain.tool import ToolRequest, ToolResult
+from chorus.domain.tool import ExecResult, ToolRequest, ToolResult
 from chorus.domain.verification import VerificationResult
+from chorus.domain.workflow import WorkflowNode, WorkflowPlan
 
 __all__ = [
     "BudgetSpec",
     "Contract",
     "ContractTask",
+    "ExecResult",
     "FilePolicy",
     "PolicyDecision",
     "ProofPackage",
@@ -29,4 +31,6 @@ __all__ = [
     "ToolRequest",
     "ToolResult",
     "VerificationResult",
+    "WorkflowNode",
+    "WorkflowPlan",
 ]

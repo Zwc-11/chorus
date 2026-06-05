@@ -64,13 +64,10 @@ class ContractToolProxy:
             proc = self.sandbox.run(
                 str(args["command"]),
                 timeout_s=self.policy.contract.budget.max_runtime_seconds,
+                parser="pytest",
             )
-            return {
-                "returncode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
-                "timeout": proc.timeout,
-            }
+            self.budget.runtime_seconds += proc.latency_ms / 1000
+            return proc.to_dict()
         if name == "git_diff":
             return self.sandbox.git_diff()
         if name == "finish":
