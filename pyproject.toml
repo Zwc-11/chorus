@@ -5,13 +5,13 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chorus-harness"
+name = "murmur-ai-harness"
 version = "0.1.0"
-description = "Reliability and cost harness for coding agents."
+description = "Self-writing multi-agent orchestration framework for cost-efficient AI — fan-out, tournaments, adversarial verification, and closed-loop repair on commodity models."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "Chorus contributors" }]
+authors = [{ name = "Murmur contributors" }]
 dependencies = [
   "typer>=0.12.5",
   "pyyaml>=6.0",

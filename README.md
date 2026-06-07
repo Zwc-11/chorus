@@ -1,43 +1,66 @@
 <!--
-This is the repo entrypoint for humans. It explains what Murmur is, what works
-right now, and the commands needed to install, test, and run the local demo.
+Murmur — self-writing multi-agent orchestration for cost-efficient AI.
 -->
 
 # Murmur
 
 > *Thousands of cheap birds flocking into one intelligent shape.*
 
-Murmur is a self-writing multi-agent harness for cheap models. Give it a task
-and a cheap model (DeepSeek V4, or a local model via Ollama) — a **planner**
-writes its own task-specific workflow, and a **runtime** executes it by spawning
-many small subagents in parallel. Expensive patterns like fan-out, tournaments,
-and adversarial verification become pennies instead of dollars.
+**Murmur** is an open-source, self-writing multi-agent orchestration framework
+that makes frontier-grade AI workflows accessible on commodity models. Instead
+of hard-wiring agent graphs or paying premium rates for a single powerful model,
+Murmur's **planner** reads your task and *generates* its own typed workflow — a
+DAG of parallel subagents, adversarial verifiers, tournament rankers, and
+iterative repair loops — then its **runtime** executes that plan concurrently,
+merging results under a strict token budget.
 
-Murmur also includes a **contract and proof layer** for AI-generated code
-changes — turning a coding task into an enforceable engineering contract, running
-an agent through policy-controlled tools, verifying the resulting diff, and
-emitting a PR-ready proof package.
+### Why Murmur?
 
-The architecture is Python-first and hexagonal: the domain owns contracts,
-events, replay, metrics, and run orchestration; models, agents, storage,
-tracing, judges, and reports plug in through ports.
+| Approach | Workflow design | Model requirement | Cost |
+|---|---|---|---|
+| Static graphs (LangGraph, CrewAI) | Developer hand-codes | Any | Medium |
+| Claude Code dynamic workflows | Self-writing | Frontier only | High |
+| **Murmur** | **Self-writing** | **Cheap / local** | **~100× lower** |
+
+Heavy orchestration patterns — fan-out, tournaments, adversarial verification,
+closed-loop repair — become the *default* when each call costs fractions of a
+cent. Murmur manufactures reliability through **volume**, not model size.
+
+The framework also ships a **contract-and-proof layer** for AI-generated code
+changes: enforceable engineering contracts, policy-controlled tool execution,
+diff verification, and PR-ready proof packages — backed by distribution-aware
+reliability metrics (`pass@1` with Wilson CI, projected and empirical `pass^k`,
+divergence analysis, and cost-aware judgment cascades).
+
+The architecture is Python-first and hexagonal — the domain owns contracts,
+events, replay, metrics, and orchestration; models, agents, storage, tracing,
+judges, and reports plug in through ports.
+
+---
 
 ## Screenshots
 
-**Murmur Workflow Workbench** — interactive Three.js tree where you compose and
-execute multi-agent workflows:
+**Workflow Workbench** — interactive Three.js workspace for composing and
+visualizing multi-agent workflow DAGs in real time:
 
-![Murmur Workflow Workbench](docs/images/murmur-workflow.png)
+![Workflow Workbench](docs/images/murmur-workflow.png)
 
-**Reliability Fan Report** — pass@1, pass^k decay curve, divergence overlay,
-judgment cascade, and failure diagnosis from a seed-driven fan-out:
+**Reliability Fan Report** — pass@1 / pass^k decay curve, divergence overlay,
+judgment cascade, and failure diagnosis from a seed-driven N-trajectory fan-out:
 
 ![Reliability Fan Report](docs/images/fan-report.png)
 
+**Trace Viewer** — gen_ai.* span waterfall with per-trajectory timelines, token
+accounting, and an interactive inspector for every step of every run:
+
+![Trace Viewer](docs/images/trace-viewer.png)
+
+---
+
 ## Current slice
 
-This repo now includes the contract-first MVP plus the earlier reliability,
-trace, judgment, and CI-gate machinery from [docs/architecture.md](docs/architecture.md):
+This repo includes the contract-first MVP plus the reliability, trace, judgment,
+and CI-gate machinery from [docs/architecture.md](docs/architecture.md):
 
 - Contract-first `fix-test` execution: reproduce a failing command, compile a
   typed YAML contract, run a policy-controlled agent, verify the diff, and write
@@ -308,5 +331,5 @@ ran**; without them it exits with an actionable error rather than a placeholder.
 This checkout is configured for:
 
 ```bash
-origin https://github.com/Zwc-11/chorus.git   # pending rename to murmur
+origin https://github.com/Zwc-11/Murmur-ai-harness.git
 ```
