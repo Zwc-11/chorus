@@ -3,7 +3,7 @@ This document is the product architecture and roadmap. It explains the target
 system, the design principles, and the phased build plan that the code follows.
 -->
 
-# Chorus — Architecture & Roadmap
+# Murmur — Architecture & Roadmap
 
 > An open-source reliability + cost harness for coding agents.
 > It runs an agent **many times** per task, **records** every step neutrally,
@@ -16,7 +16,7 @@ system, the design principles, and the phased build plan that the code follows.
 
 A coding agent's output is a **distribution**, not a single trajectory. A model that
 passes a task 6 times out of 10 and a model that passes 10 out of 10 look identical
-under `pass@1`. Chorus treats reliability as a first-class runtime concern: it runs each
+under `pass@1`. Murmur treats reliability as a first-class runtime concern: it runs each
 task `N` times, measures the spread, and uses *disagreement between runs* as a control
 signal — running cheaply when runs agree and escalating (stronger judge, self-repair,
 human gate) only when they diverge. Everything it observes is recorded as a replayable
@@ -24,14 +24,14 @@ trace, so any failure can be reproduced step-by-step instead of debugged by vibe
 
 ---
 
-## 1. The closed loop Chorus enables
+## 1. The closed loop Murmur enables
 
 ```
    change prompt / tool / model
               │
               ▼
    ┌─────────────────────┐
-   │  Chorus runs task ×N │
+   │  Murmur runs task ×N │
    └─────────┬───────────┘
              │ emits OTel gen_ai.* traces
              ▼
@@ -49,8 +49,8 @@ trace, so any failure can be reproduced step-by-step instead of debugged by vibe
 ```
 
 This is the same "write → trace → debug → write" loop people are excited about, but
-**Chorus is the harness that makes the trace and the verdict trustworthy.** We dogfood it:
-Chorus debugs *itself* through this loop.
+**Murmur is the harness that makes the trace and the verdict trustworthy.** We dogfood it:
+Murmur debugs *itself* through this loop.
 
 ---
 
@@ -61,7 +61,7 @@ Chorus debugs *itself* through this loop.
 | **Separation of powers (三权分立)** | The branch that *runs* the agent, the branch that *records* it, and the branch that *judges* it are isolated modules with no shared mutable state. The judge never executes; the executor never grades; the recorder never interprets. |
 | **Reliability is a distribution** | `pass^k`, variance, and confidence intervals — never a single `pass@1`. |
 | **Trace-first** | Nothing happens without an event. The event log *is* the source of truth; the UI, metrics, and replays are all derived from it (event sourcing). |
-| **Integrate, don't replace** | Chorus wraps the agent and tools you already use (Claude Code, LangGraph, OpenAI Agents SDK). It is a library + CLI + GitHub Action, not a new runtime to migrate to. |
+| **Integrate, don't replace** | Murmur wraps the agent and tools you already use (Claude Code, LangGraph, OpenAI Agents SDK). It is a library + CLI + GitHub Action, not a new runtime to migrate to. |
 | **Cost-aware by default** | The expensive LLM-judge fires only on disagreement. A harness that gets disabled in month three for cost is worthless. |
 | **Block on regression, not on threshold** | CI fails when reliability *drops vs the baseline*, not when it misses an arbitrary absolute bar. |
 
@@ -69,7 +69,7 @@ Chorus debugs *itself* through this loop.
 
 ## 3. High-level architecture
 
-Chorus uses a **hexagonal (ports & adapters)** core: a pure domain that knows nothing
+Murmur uses a **hexagonal (ports & adapters)** core: a pure domain that knows nothing
 about which model, framework, storage, or trace backend is plugged in. Everything
 external is an adapter behind a port. This is what makes the three branches swappable
 and testable.
@@ -236,8 +236,8 @@ the honest verdict is neither pass nor fail.
   for an OSS project where users run their own).
 - **Supported backend:** **LangSmith** (native OTel ingest; deepest LangGraph debugging;
   managed scorers). Selected via the TracePort adapter — no core changes.
-- **The MCP closed loop:** Chorus → LangSmith → coding agent pulls traces via **LangSmith
-  MCP** → debugs Chorus. Demo this on Chorus's own bugs (dogfooding).
+- **The MCP closed loop:** Murmur → LangSmith → coding agent pulls traces via **LangSmith
+  MCP** → debugs Murmur. Demo this on Murmur's own bugs (dogfooding).
 - **Privacy:** content capture off by default; structural spans always on; redact at the
   collector.
 
@@ -281,9 +281,9 @@ the honest verdict is neither pass nor fail.
 - **Tracing:** OpenTelemetry SDK (`gen_ai` semconv) → Phoenix (default) / LangSmith.
 - **Storage:** JSONL → SQLite (`aiosqlite`) → Postgres (optional).
 - **Agents under test:** Claude Code, LangGraph, OpenAI Agents SDK (via AgentPort adapters).
-- **CI:** GitHub Actions (composite action wrapping `chorus run`).
+- **CI:** GitHub Actions (composite action wrapping `murmur run`).
 - **Visualizer:** single self-contained HTML/SVG file reading the event log (no app shell).
-- **Packaging:** `pip install chorus`; `chorus run agent.py --n 12 --task tasks/142.yaml`.
+- **Packaging:** `pip install murmur`; `murmur run agent.py --n 12 --task tasks/142.yaml`.
 
 ---
 
@@ -299,12 +299,12 @@ the honest verdict is neither pass nor fail.
 
 **Phase 1 — Observation (make runs visible)**
 - OTel `gen_ai.*` instrumentation; Phoenix running locally; LangSmith sink behind the port.
-- **Exit:** you can open one run's trace in Phoenix and step through it. Dogfood: trace Chorus itself.
+- **Exit:** you can open one run's trace in Phoenix and step through it. Dogfood: trace Murmur itself.
 
 **Phase 2 — Reliability (the distribution + the visual)**
 - Run Conductor fan-out (`N` trajectories), pass^k / variance / Wilson CI / cost / latency.
 - Trajectory-fan Visualizer wired to the event log.
-- **Exit:** `chorus run … --n 12` prints a distribution and renders the fan view.
+- **Exit:** `murmur run … --n 12` prints a distribution and renders the fan view.
 
 **Phase 3 — Judgment (cost-aware cascade)**
 - Tier 0/1/2 cascade; judge-of-judge agreement; escalation FSM.
@@ -320,8 +320,8 @@ the honest verdict is neither pass nor fail.
 - **Exit:** the resume line — a `pass^k` delta from changing only the harness — and a working CI gate.
 
 **Phase 6 — Real-world validation (stretch)**
-- Run Chorus on 2–3 popular open-source agent repos; find a real reliability/cost cliff; file reproductions upstream.
-- Demo the LangSmith-MCP self-debug closed loop on a real Chorus bug.
+- Run Murmur on 2–3 popular open-source agent repos; find a real reliability/cost cliff; file reproductions upstream.
+- Demo the LangSmith-MCP self-debug closed loop on a real Murmur bug.
 - **Exit:** named real users / accepted upstream issues — the strongest interview signal.
 
 ---
@@ -329,7 +329,7 @@ the honest verdict is neither pass nor fail.
 ## 10. Suggested repo layout
 
 ```
-chorus/
+murmur/
   core/            # pure domain: conductor, escalation FSM, metrics, contracts
     ports.py       # ModelPort, AgentPort, ToolPort, StoragePort, TracePort, JudgePort
     events.py      # event types + event log
@@ -357,7 +357,7 @@ chorus/
 
 | Risk | Mitigation |
 |---|---|
-| Scope creep into "build a runtime" | Hard rule: Chorus *wraps* agents; it is library + CLI + Action. No GUI app, no scheduler, no marketplace. |
+| Scope creep into "build a runtime" | Hard rule: Murmur *wraps* agents; it is library + CLI + Action. No GUI app, no scheduler, no marketplace. |
 | OTel `gen_ai.*` churn (Development status) | Pin semconv version; isolate behind TracePort so a change is one adapter edit. |
 | Judge cost blows up | Cascade is non-negotiable; Tier 2 must be the rare path. Track cost from Phase 3. |
 | Benchmark runs are slow/expensive | Use a fixed *subset* of SWE-bench Verified for iteration; full run once for the number. |

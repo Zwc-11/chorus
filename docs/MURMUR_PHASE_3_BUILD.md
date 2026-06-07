@@ -1,6 +1,6 @@
-# Chorus — Phase 3 Build Instruction (Judgment)
+# Murmur — Phase 3 Build Instruction (Judgment)
 
-> Build-ready spec. Companion to `CHORUS_PHASE_1_BUILD.md`, `CHORUS_PHASE_2_BUILD.md`.
+> Build-ready spec. Companion to `MURMUR_PHASE_1_BUILD.md`, `MURMUR_PHASE_2_BUILD.md`.
 > Goal: decide pass/fail **cheaply**, escalate to an expensive judge **only on
 > disagreement**, and **act** on the divergence Phase 2 named. The headline artifact is a
 > measured cost number — *the cascade costs X% of judge-every-run at equal accuracy.*

@@ -1,7 +1,7 @@
-# Chorus — Phase 5 Build Instruction (Productize + Headline Number)
+# Murmur — Phase 5 Build Instruction (Productize + Headline Number)
 
 > Build-ready spec. Companion to the Phase 1–4 build docs.
-> Goal: make Chorus **droppable into a real workflow** (a GitHub Action that blocks PRs on
+> Goal: make Murmur **droppable into a real workflow** (a GitHub Action that blocks PRs on
 > *statistically real* regressions) and produce **the one number** — a `pass^k` delta on a
 > public benchmark, attributable to the harness alone. This is where the project stops being
 > a local demo and becomes a résumé line an interviewer can't wave away.
@@ -48,7 +48,7 @@ and get disabled, which is the exact failure this project exists to prevent.
   same seed policy. Compare the *paired delta*, not two independent rates.
 - **Three outcomes, not two:** `regressed` / `improved` / `inconclusive`. The third is what
   makes the gate trustworthy — it's honest when N is too small to tell.
-- **Action wraps the CLI.** A thin composite action calling `chorus run`; no logic in YAML.
+- **Action wraps the CLI.** A thin composite action calling `murmur run`; no logic in YAML.
   Integrate, don't reinvent.
 - **Benchmark uses a fixed subset for iteration**, one full run for the headline number.
 - **The number is real or absent.** No placeholders, no synthetic-validated figure dressed
@@ -64,7 +64,7 @@ and get disabled, which is the exact failure this project exists to prevent.
    `regressed | improved | inconclusive` + the delta CI.
 3. **Reporter → PR comment** — Markdown: headline verdict, `pass^k` curve delta, cost delta,
    and the **per-failure-class breakdown** (Phase 4).
-4. **GitHub Action** — composite action: checkout → `chorus run` → compare → comment → exit
+4. **GitHub Action** — composite action: checkout → `murmur run` → compare → comment → exit
    code. Inputs: `n`, `seed-policy`, `task-set`, `baseline-ref`.
 5. **Benchmark adapter(s)** — SWE-bench Verified subset and/or Terminal-Bench task loader
    behind the existing `AgentPort`/task interfaces.
@@ -118,7 +118,7 @@ that flickers is worse than none).
 ## The PR comment (what reviewers actually see)
 
 ```
-## Chorus reliability gate — REGRESSED ❌
+## Murmur reliability gate — REGRESSED ❌
 pass^5: 0.71 → 0.58   (Δ −0.13, 95% CI [−0.19, −0.07])   ← entirely below 0
 cost/run: $0.038 → $0.041 (+8%)
 
@@ -143,7 +143,7 @@ The per-class breakdown (from Phase 4) is what turns "your number went down" int
 Goal: a pass^k delta attributable to the HARNESS, not the model.
 
 1. Fix the model. Pick one model; do not change it across the comparison.
-2. Vary ONLY the scaffold (the harness/agent strategy Chorus drives).
+2. Vary ONLY the scaffold (the harness/agent strategy Murmur drives).
 3. Run both on the SAME benchmark task subset, same N, same seed policy.
 4. Report pass^k (curve), with Wilson CI, for each scaffold.
 5. The claim:  "changing only the scaffolding moved pass^5 from X to Y on SWE-bench Verified."
@@ -186,7 +186,7 @@ Goal: a pass^k delta attributable to the HARNESS, not the model.
 - **Real-world adoption / upstream repros** → Phase 6 (stretch).
 - **Auto-tuning N or thresholds** → leave as configured inputs.
 - **Multi-model leaderboards** → one model, one harness-diff, one number.
-- A hosted dashboard / SaaS → Chorus stays library + CLI + Action.
+- A hosted dashboard / SaaS → Murmur stays library + CLI + Action.
 
 ---
 
@@ -194,7 +194,7 @@ Goal: a pass^k delta attributable to the HARNESS, not the model.
 
 - [ ] Baseline store: persist + load per `(branch, suite, N)`.
 - [ ] Paired-delta regression test with `regressed/improved/inconclusive`; seeded, deterministic.
-- [ ] GitHub Action wraps `chorus run`, comments, sets exit code; demoed on a real PR.
+- [ ] GitHub Action wraps `murmur run`, comments, sets exit code; demoed on a real PR.
 - [ ] PR comment breaks regressions down by Phase 4 failure class.
 - [ ] **Phase 4 loop-detector fix landed + confusion matrix re-verified** (dependency gate).
 - [ ] Benchmark adapter loads SWE-bench Verified subset / Terminal-Bench.
@@ -205,7 +205,7 @@ Goal: a pass^k delta attributable to the HARNESS, not the model.
 
 ## The résumé line (only once the number is real)
 
-> "Built Chorus, an open-source reliability harness for coding agents: runs each task N
+> "Built Murmur, an open-source reliability harness for coding agents: runs each task N
 > times, records every step as a replayable OpenTelemetry trace, judges outcomes with a
 > cost-aware cascade (20% the cost of judging every run at equal accuracy), classifies
 > failures, and gates CI on *statistical* regression. Changing only the scaffolding moved
@@ -218,8 +218,8 @@ regression" — never ship the benchmark clause with placeholders.
 
 ## Then: Phase 6 (stretch hand-off)
 
-With a real number and a working gate, Phase 6 is adoption: run Chorus on 2–3 popular
+With a real number and a working gate, Phase 6 is adoption: run Murmur on 2–3 popular
 open-source agent repos, find a genuine reliability/cost cliff, file a reproduction upstream,
-and demo the LangSmith-MCP self-debug loop on a real Chorus bug. A named external user or an
+and demo the LangSmith-MCP self-debug loop on a real Murmur bug. A named external user or an
 acted-on upstream issue is the single strongest interview signal — but the project is already
 defensible without it.

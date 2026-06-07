@@ -64,11 +64,13 @@ contract_app = typer.Typer(help="Create and validate Murmur engineering contract
 workflow_app = typer.Typer(help="Create and validate Murmur workflow plans.")
 tools_app = typer.Typer(help="Inspect registered Murmur tool adapters.")
 proof_app = typer.Typer(help="Inspect Murmur proof artifacts.")
+flock_app = typer.Typer(help="Self-writing workflows: plan a task, run a Workflow IR plan.")
 app.add_typer(agents_app, name="agents")
 app.add_typer(contract_app, name="contract")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(tools_app, name="tools")
 app.add_typer(proof_app, name="proof")
+app.add_typer(flock_app, name="flock")
 
 
 @app.callback()
@@ -1580,3 +1582,224 @@ def agents_run(
     if html is not None:
         out = write_fan_html(result, html, events=events)
         typer.echo(f"Fan report written to {out}")
+
+
+def _example_plan_path() -> Path:
+    return Path(__file__).resolve().parent / "flock" / "examples" / "resumes.yaml"
+
+
+@flock_app.command("plan")
+def flock_plan(
+    task: Annotated[str, typer.Argument(help="Natural-language task to compile into a plan.")],
+    source: Annotated[
+        list[str] | None, typer.Option(help="A source name available at run start (repeatable).")
+    ] = None,
+    budget: Annotated[int, typer.Option(help="Token budget for the whole run.")] = 200_000,
+    live: Annotated[
+        bool, typer.Option(help="Use a real thinking model (deepseek-v4-pro) to write the plan.")
+    ] = False,
+    out: Annotated[Path | None, typer.Option(help="Write the plan YAML to this path.")] = None,
+) -> None:
+    """Compile a natural-language task into a validated Workflow IR plan.
+
+    Offline (default) the planner model is a deterministic fake, so it falls back to a
+    template plan with no API keys. ``--live`` uses DeepSeek to write a task-specific plan.
+    """
+
+    from murmur.flock.adapters.fake import FakeModel
+    from murmur.flock.ir import dump_plan_yaml
+    from murmur.flock.models import build_model
+    from murmur.flock.planner import plan_workflow
+
+    sources = tuple(source or [])
+    model = build_model("deepseek-v4-pro") if live else FakeModel()
+    try:
+        plan = asyncio.run(
+            plan_workflow(task, model=model, budget_tokens=budget, sources=sources)
+        )
+    except Exception as exc:  # noqa: BLE001 - surface any planning failure to the user
+        typer.echo(f"planning failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    yaml_text = dump_plan_yaml(plan)
+    typer.echo(yaml_text)
+    if out is not None:
+        out.write_text(yaml_text, encoding="utf-8")
+        typer.echo(f"plan written to {out}")
+
+
+def _echo_flock_summary(plan, report) -> None:
+    """Print a per-node summary, the cost totals, and the final output for a run."""
+
+    for nid, result in report.results.items():
+        status = "ok" if result.ok else f"ERROR {result.error}"
+        typer.echo(
+            f"  [{result.op:<10}] {nid:<12} -> "
+            f"{len(result.output):>3} artifact(s), {result.calls:>3} call(s)   {status}"
+        )
+    typer.echo("")
+    typer.echo(
+        f"model calls: {report.model_calls}   "
+        f"tokens: {report.spent_tokens}/{plan.budget_tokens}   "
+        f"cost: ${report.spent_cost_usd:.4f}"
+    )
+    typer.echo("\nfinal:")
+    for artifact in report.final:
+        typer.echo(f"--- {artifact.id} ---")
+        typer.echo(artifact.content[:1000])
+
+
+def _load_items(items_file: Path | None) -> list[str]:
+    if items_file is not None:
+        return [ln for ln in items_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return [f"Sample item {i}" for i in range(1, 7)]
+
+
+@flock_app.command("run")
+def flock_run(
+    plan_file: Annotated[
+        Path | None, typer.Argument(help="Plan YAML (defaults to the bundled resume example).")
+    ] = None,
+    items_file: Annotated[
+        Path | None, typer.Option(help="Source items, one per line.")
+    ] = None,
+    source: Annotated[
+        str, typer.Option(help="Name of the source the items feed (default: the plan's first).")
+    ] = "",
+    max_parallel: Annotated[int, typer.Option(help="Max concurrent subagent calls.")] = 8,
+    live: Annotated[
+        bool, typer.Option(help="Use real model adapters instead of offline fakes.")
+    ] = False,
+    untrusted: Annotated[
+        bool, typer.Option(help="Mark the source as untrusted (taint quarantine applies).")
+    ] = False,
+    event_log: Annotated[
+        Path | None, typer.Option(help="JSONL event log; reuse the same path to resume a run.")
+    ] = None,
+    trace: Annotated[
+        Path | None, typer.Option(help="Write a markdown trace (DAG + per-node table) here.")
+    ] = None,
+) -> None:
+    """Execute a Workflow IR plan and print per-node results, cost, and the final output."""
+
+    from murmur.flock.eventlog import JsonlFlockLog
+    from murmur.flock.ir import load_plan_yaml
+    from murmur.flock.models import default_resolver, offline_resolver
+    from murmur.flock.report import render_run_report
+    from murmur.flock.scheduler import execute_plan
+
+    path = plan_file or _example_plan_path()
+    try:
+        plan = load_plan_yaml(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - surface load/parse/validation errors
+        typer.echo(f"failed to load plan {path}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    src_name = source or (plan.sources[0] if plan.sources else "input")
+    items = _load_items(items_file)
+    resolver = default_resolver() if live else offline_resolver()
+    log = JsonlFlockLog(event_log) if event_log is not None else None
+
+    report = asyncio.run(
+        execute_plan(
+            plan,
+            sources={src_name: items},
+            resolver=resolver,
+            max_parallel=max_parallel,
+            event_log=log,
+            untrusted_sources=[src_name] if untrusted else None,
+        )
+    )
+
+    mode = "live" if live else "offline (deterministic fakes)"
+    typer.echo(f"goal: {report.goal}")
+    typer.echo(f"mode: {mode}   source: {src_name} ({len(items)} items)")
+    typer.echo("")
+    _echo_flock_summary(plan, report)
+
+    if trace is not None:
+        trace.write_text(render_run_report(report, plan=plan), encoding="utf-8")
+        typer.echo(f"\ntrace written to {trace}")
+
+    if not report.ok:
+        raise typer.Exit(1)
+
+
+@flock_app.command("improve")
+def flock_improve(
+    task: Annotated[str, typer.Argument(help="Natural-language task to plan and run.")],
+    source: Annotated[
+        str, typer.Option(help="Name of the source the items feed.")
+    ] = "items",
+    items_file: Annotated[
+        Path | None, typer.Option(help="Source items, one per line.")
+    ] = None,
+    k: Annotated[int, typer.Option(help="Number of candidate plans to generate and race.")] = 3,
+    library: Annotated[
+        Path, typer.Option(help="Template library directory (mined winners are saved here).")
+    ] = Path(".murmur/flock/templates"),
+    budget: Annotated[int, typer.Option(help="Token budget per candidate run.")] = 200_000,
+    live: Annotated[
+        bool, typer.Option(help="Use real models (deepseek-v4-pro planner + live adapters).")
+    ] = False,
+    trace: Annotated[
+        Path | None, typer.Option(help="Write a markdown trace of the chosen run here.")
+    ] = None,
+) -> None:
+    """Self-improving plan: reuse a proven template for this task, or race K candidates.
+
+    On a library miss it generates K candidate workflows, runs them all, keeps the best,
+    and distills the winner into the library so the next similar task is cheap.
+    """
+
+    from murmur.flock.adapters.fake import FakeModel
+    from murmur.flock.improve import self_improving_plan
+    from murmur.flock.library import TemplateLibrary
+    from murmur.flock.models import build_model, default_resolver, offline_resolver
+    from murmur.flock.report import render_run_report
+    from murmur.flock.scheduler import execute_plan
+
+    items = _load_items(items_file)
+    model = build_model("deepseek-v4-pro") if live else FakeModel()
+    resolver = default_resolver() if live else offline_resolver()
+    lib = TemplateLibrary(library)
+
+    try:
+        decision = asyncio.run(
+            self_improving_plan(
+                task,
+                model=model,
+                library=lib,
+                sources=[source],
+                source_values={source: items},
+                k=k,
+                resolver=resolver,
+                budget_tokens=budget,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - surface planning/run failures to the user
+        typer.echo(f"improve failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    if decision.origin == "mined" and decision.tournament is not None:
+        report = decision.tournament.winner.report
+        cands = decision.tournament.candidates
+        scores = ", ".join(f"{c.score:.1f}" for c in cands)
+        typer.echo(f"origin: mined (raced {len(cands)} candidates; scores: {scores})")
+    else:
+        report = asyncio.run(
+            execute_plan(decision.plan, sources={source: items}, resolver=resolver)
+        )
+        typer.echo("origin: reused (matched a previously mined template)")
+    if decision.template is not None:
+        typer.echo(f"template: {decision.template.name}   library: {library}")
+    typer.echo(f"goal: {task}   source: {source} ({len(items)} items)")
+    typer.echo("")
+    _echo_flock_summary(decision.plan, report)
+
+    if trace is not None:
+        trace.write_text(render_run_report(report, plan=decision.plan), encoding="utf-8")
+        typer.echo(f"\ntrace written to {trace}")
+
+    if not report.ok:
+        raise typer.Exit(1)

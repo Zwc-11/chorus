@@ -1,4 +1,4 @@
-# Chorus — Phase 4 Build Instruction (Diagnosis)
+# Murmur — Phase 4 Build Instruction (Diagnosis)
 
 > Build-ready spec. Companion to the Phase 1–3 build docs.
 > Goal: when a run fails, say **where** and **why** — automatically and replayably. Turn
@@ -13,7 +13,7 @@ Done when **all** hold:
 1. Every step boundary is **contract-checked** against a typed I/O schema; a violation is
    recorded with the exact step and offending field.
 2. Each failed trajectory is **auto-classified** into the taxonomy below, written as
-   `chorus.failure.class` + `chorus.failure.step` on its span.
+   `murmur.failure.class` + `murmur.failure.step` on its span.
 3. The classifier is **deterministic-first** — rule-based detectors resolve the clear cases;
    an LLM classifier is only the fallback for residual `unknown`.
 4. A failed run shows **where + why + replay**: the class, the exact step, the violation
@@ -49,7 +49,7 @@ self-labelled ones. That's the rigor that makes it defensible.
 2. **Failure taxonomy + rule-based detectors** (each reads the trace).
 3. **Classifier orchestration** — Chain of Responsibility: detectors in priority order,
    first decisive match wins; residual → LLM fallback → else `unknown`.
-4. **Write-back** — `chorus.failure.class` + `chorus.failure.step` onto spans; surface in
+4. **Write-back** — `murmur.failure.class` + `murmur.failure.step` onto spans; surface in
    the Phase 1 trace UI and the Phase 2 overlay.
 5. **Diagnosis UI** — failure breakdown + per-failure "where + why + replay" panel.
 6. **Validation harness** — inject known failures, measure per-class precision/recall/F1.
@@ -138,12 +138,12 @@ rather than hide.
 - **Failure breakdown:** extend the Phase 2 `failures` card into a small bar — counts per
   class. Click a class → filter to those trajectories.
 - **Per-failure panel ("where + why + replay"):** the class, the exact step
-  (`chorus.failure.step`), the contract-violation detail (field / expected / got), and a
+  (`murmur.failure.step`), the contract-violation detail (field / expected / got), and a
   **"replay from step k−1"** button (reuses Phase 0 replay) so the failure is reproducible
   in one click.
 - **In the divergence overlay:** annotate diverged-then-failed lanes with their class, so
   the overlay shows not just *where* runs split but *why* the splits died.
-- **In the Phase 1 trace:** the failed span already carries `chorus.failure.class` in the
+- **In the Phase 1 trace:** the failed span already carries `murmur.failure.class` in the
   inspector (the schema hook from Phase 1).
 - Cross-cutting rules unchanged: mono for machine values, colour encodes class/outcome only,
   round numbers, no prose inside the widget.
@@ -174,7 +174,7 @@ rather than hide.
 
 - [ ] Inter-step contract checks emit `contract_check` events with step + field.
 - [ ] Taxonomy + deterministic detectors in priority order; LLM fallback for residual only.
-- [ ] `chorus.failure.class` + `chorus.failure.step` written onto spans and surfaced in UI.
+- [ ] `murmur.failure.class` + `murmur.failure.step` written onto spans and surfaced in UI.
 - [ ] Per-failure "where + why + replay" works; replay-from-step reproduces the failure.
 - [ ] Validation on **injected** failures: per-class precision/recall/F1 + confusion matrix.
 - [ ] `context_drift` and `unknown` carry honest confidence indicators.

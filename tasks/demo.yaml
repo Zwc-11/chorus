@@ -1,5 +1,5 @@
 # The simplest task spec used by the Phase 0 demo.
 # The fake agent should echo the prompt, uppercase it, and match expected_output.
 task_id: demo.echo_uppercase
-prompt: hello chorus
-expected_output: HELLO CHORUS
+prompt: hello murmur
+expected_output: HELLO MURMUR

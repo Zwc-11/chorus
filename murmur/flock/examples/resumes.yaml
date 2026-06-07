@@ -1,0 +1,47 @@
+# Worked example from the design doc: rank resumes for a backend role, then verify
+# the top of the list. Runs end-to-end on cheap models — or entirely offline with the
+# deterministic resolver (no API keys), which is how the test suite exercises it.
+goal: rank resumes for a backend role; verify the top candidates
+budget_tokens: 200000
+sources:
+  - resumes
+nodes:
+  - id: score
+    op: map
+    inputs: [resumes]
+    model: deepseek-v4-flash
+    effort: low
+    role: >
+      Score this resume against the backend rubric (systems depth, testing,
+      ownership). Return JSON {"score": <0-100>, "reasons": "..."}.
+
+  - id: shortlist
+    op: filter
+    inputs: [score]
+    params: {top_k: 4}
+
+  - id: bracket
+    op: tournament
+    inputs: [shortlist]
+    model: deepseek-v4-flash
+    effort: low
+    role: Which candidate is stronger for the backend role? Reply 'A' or 'B' with a reason.
+
+  - id: check
+    op: verify
+    inputs: [bracket]
+    model: deepseek-v4-pro
+    effort: high
+    params: {top_k: 2}
+    role: >
+      Adversarially challenge this ranking against the rubric. Flag weak or
+      contested picks, or reply 'OK' if the pick is sound.
+
+  - id: report
+    op: reduce
+    inputs: [check]
+    model: deepseek-v4-pro
+    effort: high
+    role: >
+      Synthesize the final ranked list with reasons, marking any pick the
+      verification flagged as 'contested'.
