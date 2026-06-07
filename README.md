@@ -1,18 +1,38 @@
 <!--
-This is the repo entrypoint for humans. It explains what Chorus is, what works
+This is the repo entrypoint for humans. It explains what Murmur is, what works
 right now, and the commands needed to install, test, and run the local demo.
 -->
 
-# Chorus
+# Murmur
 
-Chorus is a contract and proof layer for AI-generated code changes. It turns a
-coding task into an enforceable engineering contract, runs an agent through
-policy-controlled tools in an isolated workspace, verifies the resulting diff
-with tests and file/diff rules, and emits a PR-ready proof package.
+> *Thousands of cheap birds flocking into one intelligent shape.*
 
-The architecture is Python-first. The core is hexagonal: the domain owns
-contracts, events, replay, metrics, and run orchestration; models, agents,
-storage, tracing, judges, and reports plug in through ports.
+Murmur is a self-writing multi-agent harness for cheap models. Give it a task
+and a cheap model (DeepSeek V4, or a local model via Ollama) — a **planner**
+writes its own task-specific workflow, and a **runtime** executes it by spawning
+many small subagents in parallel. Expensive patterns like fan-out, tournaments,
+and adversarial verification become pennies instead of dollars.
+
+Murmur also includes a **contract and proof layer** for AI-generated code
+changes — turning a coding task into an enforceable engineering contract, running
+an agent through policy-controlled tools, verifying the resulting diff, and
+emitting a PR-ready proof package.
+
+The architecture is Python-first and hexagonal: the domain owns contracts,
+events, replay, metrics, and run orchestration; models, agents, storage,
+tracing, judges, and reports plug in through ports.
+
+## Screenshots
+
+**Murmur Workflow Workbench** — interactive Three.js tree where you compose and
+execute multi-agent workflows:
+
+![Murmur Workflow Workbench](docs/images/murmur-workflow.png)
+
+**Reliability Fan Report** — pass@1, pass^k decay curve, divergence overlay,
+judgment cascade, and failure diagnosis from a seed-driven fan-out:
+
+![Reliability Fan Report](docs/images/fan-report.png)
 
 ## Current slice
 
@@ -288,5 +308,5 @@ ran**; without them it exits with an actionable error rather than a placeholder.
 This checkout is configured for:
 
 ```bash
-origin https://github.com/Zwc-11/chorus.git
+origin https://github.com/Zwc-11/chorus.git   # pending rename to murmur
 ```
