@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 [project]
 name = "murmur-ai-harness"
 version = "0.1.0"
-description = "Self-writing multi-agent orchestration framework for cost-efficient AI — fan-out, tournaments, adversarial verification, and closed-loop repair on commodity models."
+description = "AI harness that turns any prompt into competing sub-agents — fan-out, tournaments, adversarial verification, and closed-loop repair on cheap models."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
