@@ -1,21 +1,21 @@
 # GitHub Action
 
-Chorus gates pull requests on statistical reliability regression instead of a
+Murmur gates pull requests on statistical reliability regression instead of a
 single flaky run.
 
 ## Minimal Workflow
 
-Run `chorus init` to generate a starter workflow, or add this by hand:
+Run `murmur init` to generate a starter workflow, or add this by hand:
 
 ```yaml
-name: Chorus reliability gate
+name: Murmur reliability gate
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  chorus:
+  murmur:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
-      - run: chorus gate --suite synthetic --n 20 --k 5
+      - run: murmur gate --suite synthetic --n 20 --k 5
 ```
 
 ## Baselines
@@ -33,7 +33,7 @@ baseline. Candidate PRs compare against the stored baseline on the same suite,
 N, seed policy, and branch.
 
 ```bash
-chorus gate --suite synthetic --n 20 --k 5 --update-baseline
+murmur gate --suite synthetic --n 20 --k 5 --update-baseline
 ```
 
 The gate exits non-zero only when the bootstrap confidence interval for the
@@ -43,10 +43,10 @@ candidate-vs-baseline `pass^k` delta is entirely below zero. `improved` and
 ## Real Benchmarks
 
 Real SWE/Terminal-style benchmarks need a model key, Docker, and optional
-benchmark dependencies. Chorus refuses to emit public numbers unless the real
+benchmark dependencies. Murmur refuses to emit public numbers unless the real
 judge ran.
 
 ```bash
 python -m pip install -e ".[bench]"
-chorus bench --subset 50 --n 10 --k 5
+murmur bench --subset 50 --n 10 --k 5
 ```

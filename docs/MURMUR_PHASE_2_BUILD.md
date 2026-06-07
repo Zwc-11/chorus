@@ -1,8 +1,8 @@
-# Chorus — Phase 2 Build Instruction (Reliability)
+# Murmur — Phase 2 Build Instruction (Reliability)
 
-> Build-ready spec. Companion to `CHORUS_PHASE_1_BUILD.md`.
+> Build-ready spec. Companion to `MURMUR_PHASE_1_BUILD.md`.
 > Goal of this phase: treat a run as a **distribution of trajectories**, measure its
-> spread honestly, and render it — including the divergence view that is Chorus's
+> spread honestly, and render it — including the divergence view that is Murmur's
 > differentiator. Phase 1 (tracing) must hold first; this phase reads its event log.
 
 > **Status note.** You already built a Phase 2 *slice* (fan + metrics) on synthetic
@@ -16,7 +16,7 @@
 
 Done when **all** of these hold:
 
-1. `chorus run … --n 30` reports `pass@1` **with a Wilson CI**, a **`pass^k` decay curve**
+1. `murmur run … --n 30` reports `pass@1` **with a Wilson CI**, a **`pass^k` decay curve**
    (both estimators), variance, cost, latency, and a failure breakdown.
 2. The fan and the metrics are computed from **real recorded trajectories** (the Phase 1
    event log), not the `stochastic` agent's ad-hoc output.
@@ -52,7 +52,7 @@ If any fails, do not commit and do not start Phase 3.
 ## Build tasks (in order)
 
 **1. Fix the metric math.** Replace the slice's metrics with the definitions below
-(paste-ready core is also in `CHORUS_PHASES.md` §Phase 2).
+(paste-ready core is also in `MURMUR_PHASES.md` §Phase 2).
 
 **2. Feed from real trajectories.** Point the conductor's aggregation at recorded
 trajectories from the Phase 1 log. Demote `stochastic` to `tests/`.
@@ -189,7 +189,7 @@ every displayed number; no prose/titles inside the widget.
 - **All-converged (degenerate):** agreement flat at 100%, no divergence column. This is the
   correct, boring result your original Phase 0 run produced — show it as success, not a bug.
 - **Still running:** columns fill left→right as steps complete; metrics show "provisional."
-- **Empty:** "no runs yet — `chorus run … --n 30`".
+- **Empty:** "no runs yet — `murmur run … --n 30`".
 
 ---
 

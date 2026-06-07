@@ -40,6 +40,12 @@ thinking off.
 
 ## Current slice
 
+It also now includes **Flock** (`murmur.flock`), the self-writing multi-agent
+engine: a planner compiles a task into a typed, schema-validated workflow DAG and
+an async executor runs it by fanning out cheap, isolated subagents — fan-out,
+tournaments, and adversarial verification by default. Try `murmur flock run`
+(offline, no keys) and see [docs/flock.md](docs/flock.md).
+
 This repo now includes the contract-first MVP plus the earlier reliability,
 trace, judgment, and CI-gate machinery from [docs/architecture.md](docs/architecture.md):
 
@@ -85,7 +91,7 @@ trace, judgment, and CI-gate machinery from [docs/architecture.md](docs/architec
 - Statistical CI gate: a baseline store, a paired-delta bootstrap regression test
   (`regressed` / `improved` / `inconclusive`, seeded and deterministic), a
   per-failure-class PR comment, and a composite GitHub Action wrapping it —
-  [demonstrated blocking a real regression on PR #2](https://github.com/Zwc-11/chorus/pull/2).
+  [demonstrated blocking a real regression on PR #2](https://github.com/Zwc-11/murmur/pull/2).
 - Benchmark seam: a `load_suite` / `Scaffold` interface with two loaders — the
   deterministic synthetic suite, and a real **SWE-bench Verified** loader that maps
   instances to `TaskSpec`s (problem statement → prompt; `FAIL_TO_PASS` /
@@ -312,5 +318,5 @@ ran**; without them it exits with an actionable error rather than a placeholder.
 This checkout is configured for:
 
 ```bash
-origin https://github.com/Zwc-11/chorus.git
+origin https://github.com/Zwc-11/murmur.git
 ```

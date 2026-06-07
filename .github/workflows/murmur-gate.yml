@@ -1,8 +1,8 @@
-# Dogfood the Chorus reliability gate on this repo's own PRs.
+# Dogfood the Murmur reliability gate on this repo's own PRs.
 # On a PR it runs the suite, posts the verdict as a comment, and fails the check
 # only on a statistically real regression. On push to main it refreshes the
 # baseline so future PRs compare against the merged state.
-name: Chorus Reliability Gate
+name: Murmur Reliability Gate
 
 on:
   pull_request:
@@ -22,10 +22,10 @@ jobs:
       # Persist the baseline directory across runs so PRs compare against main.
       - uses: actions/cache@v4
         with:
-          path: .chorus/baselines
-          key: chorus-baseline-${{ hashFiles('chorus/benchmarks/loader.py') }}
+          path: .murmur/baselines
+          key: murmur-baseline-${{ hashFiles('murmur/benchmarks/loader.py') }}
 
-      - uses: ./chorus/ci
+      - uses: ./murmur/ci
         with:
           suite: synthetic
           n: "30"
