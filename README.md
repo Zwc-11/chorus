@@ -1,243 +1,217 @@
 <!--
-This is the repo entrypoint for humans. It explains what Chorus is, what works
-right now, and the commands needed to install, test, and run the local demo.
+Murmur AI Harness — send any prompt, get competing sub-agents, keep the best answer.
 -->
 
-# Chorus
+# Murmur AI Harness
 
-Chorus is an open-source reliability and cost harness for coding agents. It runs
-an agent many times per task, records every step as neutral events, judges
-outcomes independently, and eventually gates CI on statistical regression instead
-of one noisy run.
+> **Send any prompt. Murmur spawns competing sub-agents, verifies their work, and returns the best answer.**
 
-The architecture is Python-first. The core is hexagonal: the domain owns
-contracts, events, replay, metrics, and run orchestration; models, agents,
-storage, tracing, judges, and reports plug in through ports.
+Murmur is an open-source AI harness that turns a single user prompt into a
+multi-agent competition. A **planner** reads your prompt and automatically
+generates a typed workflow — a DAG of parallel sub-agents, each working
+independently in its own isolated context. The sub-agents **fan out**, produce
+candidate answers, then **compete** through tournaments, adversarial
+verification, and iterative repair. Murmur picks the winner and hands you the
+final result.
 
-## Current slice
+The entire system runs on **cheap, commodity models** (DeepSeek, Ollama, or any
+OpenAI-compatible API). Because each sub-agent call costs fractions of a cent,
+Murmur can afford to spawn dozens of competing attempts by default — manufacturing
+reliability through **volume** instead of paying for a single expensive model.
 
-This repo covers the Phase 0/1 core, the Phase 2-4 reliability, judgment, and
-diagnosis path, and the Phase 5 CI gate from
-[docs/architecture.md](docs/architecture.md):
+---
 
-- Pure core domain types and ports.
-- Append-only JSONL and in-memory event stores.
-- Tool gateway with record and replay modes.
-- Fake agent adapter for deterministic local demos.
-- Stochastic flaky agent so the harness has a real distribution to measure.
-- Concurrent `N`-trajectory fan-out in the run conductor.
-- Distribution-aware metrics: `pass@1` with Wilson CI, projected `pass^k`,
-  empirical unbiased `pass^k`, variance, cost, p50/p95 latency, and failure
-  breakdown.
-- Event-log-derived results: metrics, fan, divergence overlay, judgment, and
-  diagnosis are projected from recorded events.
-- Agreement/divergence analysis: step-index alignment, per-step agreement, first
-  divergence detection, and overlay cell states (`converged`, `diverged`,
-  `failed`, `inactive`).
-- Cost-aware judgment cascade: deterministic Tier 0, convergence Tier 1, Tier 2
-  only for unknown/minority trajectories, cached judge-call helper, escalation
-  trace, and cost-ratio measurement harness.
-- Diagnosis: step-boundary schema checks, deterministic-first failure taxonomy,
-  trace stamping with `chorus.failure.class` / `chorus.failure.step`, and
-  validation metrics for injected failures.
-- Trajectory-fan visualizer: a terminal view and a standalone HTML/SVG report
-  with reliability cards, decay curve, divergence overlay, judgment, and
-  diagnosis.
-- Statistical CI gate: a baseline store, a paired-delta bootstrap regression test
-  (`regressed` / `improved` / `inconclusive`, seeded and deterministic), a
-  per-failure-class PR comment, and a composite GitHub Action wrapping it —
-  [demonstrated blocking a real regression on PR #2](https://github.com/Zwc-11/chorus/pull/2).
-- Benchmark seam: a `load_suite` / `Scaffold` interface with two loaders — the
-  deterministic synthetic suite, and a real **SWE-bench Verified** loader that maps
-  instances to `TaskSpec`s (problem statement → prompt; `FAIL_TO_PASS` /
-  `PASS_TO_PASS` test contract → metadata) over a deterministic subset.
-- Real SWE-bench evaluation along **two paths**, both holding the model fixed and
-  varying only the scaffold (`single-shot` vs `self-repair`):
-  - **Integrated** — `SwePatchAgent` implements the existing `AgentPort` and
-    `SweBenchJudge` implements `JudgePort`; the conductor's judge is injectable, so
-    a real run flows through the harness and inherits tracing, replay, divergence,
-    and per-step diagnosis (`chorus gate --suite swe-bench-verified --real-agent`).
-    Per-trajectory Docker eval — right for small/debug N.
-  - **Batch** — `chorus bench` evaluates all patches in one parallel harness run for
-    the headline number at scale (faster, but not traced).
-  Both fold resolved/not into the same `SuiteResult` + `pass^k` machinery the gate
-  uses. The wiring is complete and tested with fakes; the numbers need
-  `ANTHROPIC_API_KEY` + Docker (see below).
-- CLI commands to record/replay a dummy run, fan out a stochastic run, render
-  trace/fan HTML artifacts, gate a candidate against a baseline, and run the
-  SWE-bench harness-only comparison.
-- Tests proving replay, event-log projection, metric math, divergence detection,
-  judgment gating, judge caching, failure classification, the three gate verdicts,
-  and seed reproducibility.
+## How it works
 
-## Environment
+```text
+You send a prompt
+    ↓
+Planner reads the prompt, generates a typed workflow (DAG)
+    ↓
+Runtime spawns N isolated sub-agents in parallel
+    ↓
+Sub-agents compete: fan-out → tournament → adversarial verification → repair
+    ↓
+Best answer is selected and returned with a full execution trace
+```
 
-Use Python 3.12 or newer.
+### Why Murmur?
+
+| Approach | Workflow design | Model requirement | Cost |
+|---|---|---|---|
+| Static graphs (LangGraph, CrewAI) | Developer hand-codes steps | Any | Medium |
+| Claude Code dynamic workflows | Self-writing | Frontier only (Opus) | High |
+| **Murmur** | **Self-writing from your prompt** | **Cheap / local** | **Pennies or free** |
+
+### Core idea
+
+You don't need a smarter model — you need **more attempts**. Fan-out,
+tournaments, and adversarial verification cost real money on frontier models;
+on DeepSeek Flash or a local Ollama model they're nearly free. Murmur exploits
+that cost asymmetry: spawn many cheap sub-agents, make them compete, and keep
+only the verified winner.
+
+---
+
+## Screenshots
+
+**Workflow Workbench** — interactive Three.js workspace for composing and
+visualizing multi-agent workflow DAGs:
+
+![Workflow Workbench](docs/images/murmur-workflow.png)
+
+**Reliability Fan Report** — pass@1 / pass^k curves with divergence overlay,
+judgment cascade, and failure diagnosis from a multi-trajectory fan-out:
+
+![Reliability Fan Report](docs/images/fan-report.png)
+
+**Trace Viewer** — span waterfall with per-trajectory timelines, token
+accounting, and an interactive inspector for every step of every run:
+
+![Trace Viewer](docs/images/trace-viewer.png)
+
+---
+
+## Architecture
+
+```
+Prompt → Planner → Workflow IR (typed DAG) → Runtime → Sub-agents → Result
+```
+
+- **Planner** — reads your prompt, selects or generates a workflow template
+  (coding repair, strategy research, document review, or free-form), and emits a
+  schema-validated `WorkflowPlan`.
+- **Workflow IR** — a typed DAG of operator nodes (`classify`, `map`, `generate`,
+  `exec`, `loop`, `filter`, `tournament`, `verify`, `rank`, `reduce`, `report`).
+  Structured data, not code — safe, inspectable, and replayable.
+- **Runtime** — walks the DAG, runs independent nodes concurrently (async with
+  semaphore-capped parallelism), and treats merge nodes as barriers.
+- **Sub-agents** — each sub-agent is an isolated actor with its own context,
+  budget slice, and sandbox. No shared state between competitors.
+- **Model Gateway** — one `ModelPort` interface with adapters for DeepSeek and
+  Ollama (both OpenAI-compatible). Swapping models is a one-line config change.
+- **Contract & Proof Layer** — enforceable engineering contracts, policy-controlled
+  tool execution, diff verification, and PR-ready proof packages with
+  distribution-aware reliability metrics.
+
+---
+
+## What's included
+
+### Multi-agent orchestration
+- Automatic workflow generation from any user prompt
+- Parallel sub-agent fan-out with isolated contexts
+- Tournament-style ranking of competing candidates
+- Adversarial verification (blind refuter per artifact)
+- Closed-loop repair with test feedback
+- Token budget accounting and quarantine/taint tracking
+- Append-only event log for resumable runs
+
+### Contract-first code changes
+- `fix-test` execution: reproduce a failing command → compile a typed contract →
+  run a policy-controlled agent → verify the diff → emit proof artifacts
+- Policy-controlled tools: `list_files`, `search`, `read_file`, `apply_patch`,
+  `run_test`, `git_diff`, `finish`
+- Dangerous operations (`.env` access, secrets, destructive shell, network,
+  pushes) denied by default
+
+### Reliability & observability
+- `pass@1` with Wilson CI, projected and empirical `pass^k`, divergence analysis
+- Cost-aware judgment cascade (deterministic → convergence → LLM, with caching)
+- Failure diagnosis with taxonomy and trace stamping
+- `gen_ai.*` span waterfall trace viewer (standalone HTML, no server)
+- OTLP export to LangSmith / Phoenix for production debugging
+- Statistical CI gate with bootstrap regression testing
+
+### Benchmarks
+- SWE-bench Verified loader with deterministic subsets
+- Single-shot vs self-repair scaffold comparison
+- Integrated and batch evaluation paths
+
+### Trace import
+- OpenAI Agents SDK, Claude Code, Google ADK, and LangGraph traces can be
+  normalized into the Murmur event log for unified analysis
+
+---
+
+## Quick start
+
+**Requirements:** Python 3.12+
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+pip install --upgrade pip
+pip install -e ".[dev]"
 ```
 
-Run the checks:
+Run tests and lint:
 
 ```bash
 pytest
 ruff check chorus tests
 ```
 
-Run the Phase 0 record/replay demo:
+### Try it
+
+**Fix a failing test** (contract-first, single or multi-candidate):
 
 ```bash
-chorus demo --n 3 --event-log .chorus/demo.jsonl
-chorus replay --event-log .chorus/demo.jsonl
-chorus replay --event-log .chorus/demo.jsonl --mutate
+chorus fix-test --cmd "python -m pytest tests/test_checkout.py -q" --budget 0.50
 ```
 
-The `--mutate` replay intentionally changes the task prompt and should fail with
-a replay divergence. That is the first proof that Chorus can detect when a
-trajectory stops matching the recorded path.
-
-Run the Phase 2-4 reliability fan-out:
+**Fan out a multi-trajectory reliability run:**
 
 ```bash
 chorus run --n 30 --success-rate 0.7 --error-rate 0.1 --seed 7
 ```
 
-This fans out a flaky agent `N` times and prints the distribution. The point is
-the gap between `pass@1`, projected `pass^k`, and the empirical unbiased
-`pass^k` curve. A one-shot `pass@1` eval cannot see that gap; Chorus can.
-
-```text
-pass@1            0.80    Wilson95 [0.63, 0.90]
-pass^k projected  0.0012  (i.i.d. k=30)
-pass^k empirical  0.0000  (unbiased; 24/30 pass)
-```
-
-The run is reproducible per `--seed`. It also writes a standalone
-`.chorus/fan.html` report you can open in a browser (no server, no build step):
-reliability cards, the projected-vs-empirical `pass^k` decay curve, the
-divergence overlay (the flaky agent shares a fixed opening plan, so the lanes
-stay *converged* until the seed-driven split — divergence at step 4 — making the
-overlay locate exactly where runs stop agreeing), the judgment cascade cost
-panel, and the failure-diagnosis breakdown.
-
-Render the Phase 1 trace viewer (`gen_ai.*` span waterfall + inspector) and
-verify replay:
+**Render the trace viewer:**
 
 ```bash
 chorus trace --n 30 --seed 7 --replay
 ```
 
-`--replay` re-executes every recorded trajectory through the replay gateway and
-confirms each reproduces exactly, marking the spans `chorus.replay=true`.
-
-Export the trace to LangSmith and close the MCP self-debug loop (Phase 6):
+**Gate CI on statistical regression:**
 
 ```bash
-pip install -e ".[otel]"
-export LANGSMITH_API_KEY=ls-...
-chorus trace --n 12 --seed 7 --otlp --backend langsmith --project chorus
+chorus gate --branch main --n 20 --update-baseline
+chorus gate --branch main --n 20 --scaffold worse --success-delta -0.12
 ```
 
-The same `gen_ai.*` spans the local viewer renders are exported over OTLP to
-LangSmith (content capture stays off by default). The repo ships a
-[`.mcp.json`](.mcp.json) wiring the official LangSmith MCP server, so a coding agent
-can pull the run's trace back and debug Chorus from it — the "write → trace → debug"
-loop closed on Chorus itself. Full runbook:
-[docs/LANGSMITH_MCP_LOOP.md](docs/LANGSMITH_MCP_LOOP.md). The exporter, CLI, and
-`.mcp.json` are in the repo and tested; the live export + MCP debugging need a
-LangSmith account (documented, never faked).
-
-Gate CI on a *statistical* regression (Phase 5):
+**Generate a workflow plan from a task:**
 
 ```bash
-chorus gate --branch main --n 20 --update-baseline                 # records the baseline
-chorus gate --branch main --n 20 --scaffold worse --success-delta -0.12   # a candidate
+chorus workflow plan --task "Fix the checkout discount bug" \
+  --cmd "python -m pytest tests/test_checkout.py -q" --attempts 5 --max-repairs 3
 ```
 
-The gate runs a task suite, compares the candidate against the stored baseline on
-the same tasks/N/seed, and bootstraps a 95% CI on the per-task `pass^k` delta. It
-emits one of three verdicts and exits non-zero **only** on `regressed`:
+See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough and
+[docs/github-action.md](docs/github-action.md) for CI integration.
 
-```text
-## Chorus reliability gate — REGRESSED ❌
-pass^5: 0.21 -> 0.07   (Δ -0.14, 95% CI [-0.21, -0.07])   <- below 0
-New failures by class (candidate vs baseline):
-  +16  contract_violation
-  +15  tool_error
+---
+
+## Project status
+
+Working and tested locally:
+
+- Multi-agent workflow planner and runtime
+- Contract-first `fix-test` with proof packages
+- Reliability fan-out with distribution-aware metrics
+- Trace viewer, fan report, and divergence overlay
+- Statistical CI gate with bootstrap regression testing
+- SWE-bench harness wiring (fake models/evaluators)
+- External trace importers (OpenAI, Claude Code, ADK, LangGraph)
+
+Not yet publicly validated:
+
+- Paid SWE-bench benchmark with a real frontier model and Docker evaluator.
+  Murmur refuses to print a number unless a real evaluation actually ran.
+
+---
+
+## Repository
+
 ```
-
-`improved` (CI entirely above 0) and `inconclusive` (CI straddles 0 — "widen N")
-do not block. Blocking only on a statistically real regression — never on a raw
-dip — is what keeps the gate from crying wolf and getting disabled. The bootstrap
-is seeded, so the verdict is stable. The composite GitHub Action in
-[chorus/ci/action.yml](chorus/ci/action.yml) wraps this command, posts the report
-as a PR comment, and sets the check status.
-
-Load the real SWE-bench Verified task set behind the same seam:
-
-```bash
-# from a local dump of princeton-nlp/SWE-bench_Verified, or `pip install datasets`
-CHORUS_SWEBENCH_PATH=swebench_verified.jsonl \
-  chorus gate --suite swe-bench-verified --n 5
-```
-
-The loader maps each instance to a `TaskSpec` (problem statement → prompt, the
-`FAIL_TO_PASS` / `PASS_TO_PASS` tests → an acceptance contract in metadata) over a
-deterministic subset. The gate deliberately **refuses** to run these through the
-built-in stochastic scaffold — that would emit a `pass^k` that *looks* like a
-benchmark result and isn't. Producing the real number is `chorus bench`, below.
-
-Run the SWE-bench harness-only comparison (the headline number):
-
-```bash
-pip install -e '.[bench]'          # anthropic + datasets + swebench (needs Docker)
-export ANTHROPIC_API_KEY=sk-ant-…  # one model, held fixed across scaffolds
-chorus bench --subset 100 --n 10 --k 5 \
-  --scaffold-a single-shot --scaffold-b self-repair
-```
-
-This holds one model fixed and varies **only the scaffold**: scaffold A is a
-single model call, scaffold B adds one self-review/repair turn — the only
-difference, so the `pass^k` delta is attributable to the harness. Each attempt's
-patch is evaluated by the official SWE-bench Docker harness; resolved/not folds
-into the same `SuiteResult` + `pass^k` + paired-delta machinery the gate uses, and
-the report states the claim from measured numbers:
-
-```text
-scaffold A  single-shot   pass@1 0.31  Wilson95 [0.23, 0.41]  pass^5 0.18
-scaffold B  self-repair   pass@1 0.39  Wilson95 [0.30, 0.49]  pass^5 0.27
-verdict     IMPROVED  (Δpass^5 +0.09, 95% CI [+0.02, +0.16])
-```
-
-Or run the **integrated** path, which routes a real SWE-bench run through the
-conductor so it inherits tracing, replay, and per-step diagnosis (per-trajectory
-Docker eval; use a small N):
-
-```bash
-chorus gate --suite swe-bench-verified --real-agent --scaffold self-repair --n 5
-```
-
-*(Illustrative layout — the figures above are not a measured result.)* The harness
-**refuses to print a number unless a real model and Docker evaluation actually
-ran**; without them it exits with an actionable error rather than a placeholder.
-
-> **The harness is built; the measured number is the one remaining paid step.**
-> The wiring — model adapter (prompt-cached), the two scaffolds, the SWE-bench
-> evaluator, the runner, and the report — is complete and unit-tested with fakes
-> (no API, no Docker). What's left is *running* it: a frontier model plus the
-> SWE-bench Docker harness over a subset, which costs real money and compute (on
-> the order of $1–2k for a defensible 100-instance subset). Until that run
-> happens, the résumé line stops at "gates CI on statistical regression" — the one
-> locked rule is **the number is real or absent**.
-
-## GitHub
-
-This checkout is configured for:
-
-```bash
-origin https://github.com/Zwc-11/chorus.git
+https://github.com/Zwc-11/Murmur-ai-harness
 ```

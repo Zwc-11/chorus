@@ -205,6 +205,8 @@ def _trajectory_to_trace(events: list[Event], *, capture_content: bool, replay: 
             for key in ("side", "field", "expected", "got"):
                 if key in payload:
                     attrs[f"chorus.contract.{key}"] = payload[key]
+            if payload.get("diagnostic_ids"):
+                attrs["chorus.contract.diagnostic_ids"] = list(payload["diagnostic_ids"])
             add(
                 Span(
                     span_id=_sid(trajectory_id, event.seq, "contract"),

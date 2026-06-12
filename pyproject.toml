@@ -5,15 +5,16 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chorus-harness"
+name = "murmur-ai-harness"
 version = "0.1.0"
-description = "Reliability and cost harness for coding agents."
+description = "AI harness that turns any prompt into competing sub-agents — fan-out, tournaments, adversarial verification, and closed-loop repair on cheap models."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "Chorus contributors" }]
+authors = [{ name = "Murmur contributors" }]
 dependencies = [
   "typer>=0.12.5",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,7 @@ otel = [
 # None of this is needed for the gate, the synthetic suite, or the tests.
 bench = [
   "anthropic>=0.40",
+  "openai>=1.40",
   "datasets>=2.20",
   "swebench>=2.1",
 ]
@@ -64,3 +66,6 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 # Holds an embedded HTML/JS trace viewer as one string literal; its lines are a
 # web asset, not Python to be wrapped at 100 cols.
 "chorus/report/trace_html.py" = ["E501"]
+"chorus/report/fan_html.py" = ["E501"]
+"chorus/report/ui_theme.py" = ["E501"]
+"chorus/report/murmur_workflow_html.py" = ["E501"]

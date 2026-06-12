@@ -283,10 +283,17 @@ def _detect_contract_violation(
     del task, policy
     for event in events:
         if event.type == EventType.CONTRACT_CHECK and not bool(event.payload.get("accepted", True)):
+            ids = tuple(str(item) for item in event.payload.get("diagnostic_ids", ()) if item)
+            detail = (
+                "failed predicates: " + ", ".join(ids)
+                if ids
+                else "acceptance predicate returned false"
+            )
             return FailureDiagnosis(
                 cls="contract_violation",
                 step=_payload_step(event),
-                detail="acceptance predicate returned false",
+                detail=detail,
+                secondary=ids,
             )
     return None
 

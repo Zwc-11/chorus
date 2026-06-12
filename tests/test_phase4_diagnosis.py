@@ -75,6 +75,37 @@ def test_classifier_uses_priority_order_for_root_cause() -> None:
     assert diagnosis.step == 0
 
 
+class BadWebsiteAgent:
+    async def run(self, task: TaskSpec, gateway: ToolGatewayPort) -> str:
+        await gateway.step(index=0, phase="write")
+        return (
+            '<!DOCTYPE html><html><body><h1>chorus</h1><section id="metrics">'
+            "pass@1 pass@k variance</section></body></html>"
+            "<style>:root{--accent:#e8192a}</style>"
+        )
+
+
+def test_final_contract_check_carries_structured_diagnostics() -> None:
+    from chorus.core.agent_tasks import hard_website_task
+
+    store = InMemoryEventStore()
+    conductor = RunConductor(agent=BadWebsiteAgent(), storage=store, tools={})
+    result = run_async(conductor.run(hard_website_task(), n=1))
+    events = list(run_async(store.read_events()))
+    final_check = [
+        event
+        for event in events
+        if event.type == EventType.CONTRACT_CHECK and event.payload.get("diagnostic_ids")
+    ][0]
+
+    assert result.trajectories[0].failure_class == "contract_violation"
+    assert result.trajectories[0].failure_detail == (
+        "failed predicates: missing_metric_pass_hat_k"
+    )
+    assert final_check.payload["diagnostic_ids"] == ["missing_metric_pass_hat_k"]
+    assert "missing_metric_pass_hat_k" in final_check.payload["repair_feedback"]
+
+
 def test_timeout_budget_loop_and_unknown_detectors_are_deterministic() -> None:
     timeout = classify_trajectory(
         [

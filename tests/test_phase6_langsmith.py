@@ -16,7 +16,9 @@ from chorus.adapters.trace.memory import InMemoryTraceCollector
 from chorus.adapters.trace.otlp import (
     _BACKEND_DEFAULTS,
     LANGSMITH_APP_URL,
+    _CountingSpanExporter,
     _langsmith_headers,
+    _metrics_endpoint,
     build_otlp_trace_port,
     langsmith_attributes,
     langsmith_project_url,
@@ -59,6 +61,11 @@ def test_project_url_is_well_formed_and_encoded() -> None:
     url = langsmith_project_url("my proj")
     assert url.startswith(LANGSMITH_APP_URL)
     assert "my%20proj" in url  # the project name is URL-encoded
+
+
+def test_phoenix_metrics_endpoint_is_derived_from_trace_endpoint() -> None:
+    assert _metrics_endpoint("http://localhost:6006/v1/traces").endswith("/v1/metrics")
+    assert _metrics_endpoint("http://collector/custom") == "http://collector/custom"
 
 
 def test_langsmith_attributes_mirror_chorus_to_metadata_and_kind() -> None:
@@ -105,6 +112,45 @@ def test_export_pipeline_emits_balanced_gen_ai_spans() -> None:
     model_spans = [span for span in collector.spans if span.kind == "model"]
     assert model_spans
     assert model_spans[0].attributes["gen_ai.operation.name"] == "chat"
+
+
+class _FakeInner:
+    """Stands in for an OTLP exporter, returning a scripted sequence of results."""
+
+    def __init__(self, results: list) -> None:
+        self._results = list(results)
+
+    def export(self, spans):
+        return self._results.pop(0)
+
+    def shutdown(self):
+        return None
+
+    def force_flush(self, timeout_millis: int = 30000):
+        return True
+
+
+def test_counting_exporter_flags_rejected_batches() -> None:
+    # The bug: a 401 was logged and swallowed, so the CLI reported success anyway.
+    success = object()  # sentinel standing in for SpanExportResult.SUCCESS
+    exporter = _CountingSpanExporter(_FakeInner([success, "FAILURE", success]), success)
+    exporter.export([1, 2, 3])
+    exporter.export([4])  # rejected (e.g. 401)
+    exporter.export([5, 6])
+
+    stats = exporter.stats()
+    assert (stats.ok_batches, stats.ok_spans, stats.failed_batches) == (2, 5, 1)
+    assert stats.ok is False  # any failed batch -> not ok -> CLI must exit non-zero
+
+
+def test_counting_exporter_ok_when_all_accepted() -> None:
+    success = object()
+    exporter = _CountingSpanExporter(_FakeInner([success, success]), success)
+    exporter.export([1, 2])
+    exporter.export([3])
+    stats = exporter.stats()
+    assert stats.ok is True
+    assert stats.ok_spans == 3 and stats.failed_batches == 0
 
 
 def test_build_langsmith_port_constructs_when_otel_present() -> None:

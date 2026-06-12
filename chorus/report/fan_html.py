@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import json
+from collections import Counter, defaultdict
 from html import escape
 from pathlib import Path
 
 from chorus.core.divergence import DivergenceOverlay, build_divergence_overlay, signature_label
 from chorus.core.events import Event
 from chorus.core.types import RunResult
+from chorus.report.ui_theme import (
+    document_close,
+    document_head,
+    hud_shell_end,
+    hud_shell_start,
+)
 
 _FILL = {
-    "pass": "#22c55e",
-    "fail": "#ef4444",
-    "error": "#f59e0b",
-    "converged": "#14532d",
-    "diverged": "#854d0e",
-    "failed": "#7f1d1d",
+    "pass": "#2d2d2a",
+    "fail": "#e8192a",
+    "error": "#c45c00",
+    "converged": "#3d3d38",
+    "diverged": "#8a6a20",
+    "failed": "#a01020",
     "inactive": "transparent",
 }
 
@@ -33,13 +40,24 @@ def render_fan_html(
     errors = sum(1 for item in result.trajectories if item.outcome == "error")
     lower, upper = metrics.wilson_ci
     overlay = build_divergence_overlay(events) if events else None
+    failure_index = _failure_index(result, trace_href)
 
+    run_line = (
+        f"{escape(result.task_id)} · {escape(result.run_id)} · "
+        f"n={len(result.trajectories)} · seed-driven fan"
+    )
+    head = document_head(title=f"Chorus — {result.task_id}")
+    shell = hud_shell_start(
+        brand="chorus",
+        run_line=run_line,
+        quote="People always look at the sun. Then they can't see anything.",
+    )
     cards = "\n".join(
         [
             _metric_card(
                 "pass@1",
                 f"{metrics.pass_at_1:.2f}",
-                f"95% CI {lower:.2f}-{upper:.2f}",
+                f"95% CI {lower:.2f}–{upper:.2f}",
             ),
             _metric_card(
                 "pass^k projected",
@@ -54,86 +72,115 @@ def render_fan_html(
             _metric_card(
                 "failures",
                 f"{failures} / {len(result.trajectories)}",
-                f"{failures - errors} fail - {errors} error",
+                f"{failures - errors} fail · {errors} error",
+                clickable=bool(failure_index),
+                data_attrs=' data-chorus-failures-summary="1"' if failure_index else "",
             ),
         ]
     )
 
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>Chorus reliability - {escape(result.task_id)}</title>
-<style>
-  :root {{
-    --bg:#050505; --panel:#242423; --panel2:#30302e; --line:#5e5e59;
-    --txt:#f5f5f2; --muted:#b8b8b2; --dim:#8b8b84; --blue:#2f8ee5;
-    --green:#10b981; --warn:#f59e0b; --err:#ef4444;
-    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    --sans: ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
-  }}
-  * {{ box-sizing:border-box; }}
-  body {{ margin:0; background:var(--bg); color:var(--txt); font-family:var(--sans); }}
-  main {{ max-width:1120px; margin:0 auto; padding:26px; }}
-  h1 {{ margin:0 0 16px; font-size:16px; font-weight:600; color:var(--muted); }}
-  .cards {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:24px; }}
-  .card {{ background:var(--panel); border-radius:8px; padding:20px 24px; min-height:126px; }}
-  .label {{ color:var(--muted); font-size:13px; text-transform:lowercase; }}
-  .num {{ font:700 34px/1.1 var(--mono); margin-top:12px; }}
-  .sub {{ color:var(--muted); font:600 13px/1.3 var(--mono); margin-top:6px; }}
-  .zone {{ margin-top:28px; }}
-  .legend {{ display:flex; gap:28px; font-weight:700; color:var(--muted); margin:0 0 10px; }}
-  .dot {{ width:11px; height:11px; border-radius:50%; display:inline-block; margin-right:8px; }}
-  svg {{ width:100%; height:auto; display:block; }}
-  .axis {{ fill:var(--muted); font:12px var(--mono); }}
-  .grid {{ stroke:var(--line); stroke-width:1; opacity:.55; }}
-  .projected {{ fill:none; stroke:var(--blue); stroke-width:3; }}
-  .empirical {{ fill:none; stroke:var(--green); stroke-width:3; stroke-dasharray:5 6; }}
-  .shade {{ fill:#7f1d1d; opacity:.7; }}
-  .note {{ fill:#fca5a5; font:12px var(--mono); }}
-  .overlay-bg {{ fill:var(--panel2); stroke:var(--line); stroke-width:1; }}
-  .lane-label {{ fill:var(--muted); font:13px var(--mono); }}
-  .cell {{ stroke:#3f3f3a; stroke-width:1; rx:4; }}
-  .inactive {{ fill:transparent; stroke:#6b6b65; stroke-dasharray:5 4; }}
-  .div-band {{ fill:#f59e0b; opacity:.18; }}
-  .div-toggle {{ cursor:pointer; }}
-  .div-outline {{ fill:none; stroke:#f59e0b; stroke-width:2; }}
-  .split-only .cellwrap:not(.split) {{ opacity:.18; }}
-  .panel {{ background:var(--panel); border-radius:8px; padding:16px; }}
-  .cols {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }}
-  .bar {{ height:10px; background:#171717; border-radius:3px; overflow:hidden; display:flex; }}
-  .seg {{ height:10px; }}
-  .kv {{ display:grid; grid-template-columns:170px 1fr; gap:8px;
-         font:13px var(--mono); margin:7px 0; }}
-  .k {{ color:var(--muted); }}
-  a {{ color:inherit; text-decoration:none; }}
-  @media (max-width: 820px) {{
-    .cards, .cols {{ grid-template-columns:1fr; }}
-    main {{ padding:16px; }}
-  }}
-</style>
-</head>
-<body>
-<main>
-  <h1>Chorus - {escape(result.task_id)} - {escape(result.run_id)}</h1>
-  <section class="cards">{cards}</section>
-  <section class="zone">
-    <div class="legend">
-      <span><span class="dot" style="background:var(--blue)"></span>projected (i.i.d. model)</span>
-      <span><span class="dot" style="background:var(--green)"></span>empirical (unbiased)</span>
-    </div>
-    {_decay_curve(result)}
-  </section>
-  <section class="zone">
-    {_overlay_section(overlay, trace_href)}
-  </section>
-  <section class="zone cols">
-    {_judgment_panel(result)}
-    {_failure_panel(result)}
-  </section>
-</main>
-</body>
-</html>
+    body = (
+        f"{shell}"
+        '<section class="cards">'
+        f"{cards}"
+        "</section>"
+        '<section class="hud-widget">'
+        '<div class="hud-widget__hd">pass^k decay · projected vs empirical</div>'
+        '<div class="hud-widget__bd">'
+        '<div class="legend">'
+        '<span><span class="dot dot--line"></span>projected (i.i.d.)</span>'
+        '<span><span class="dot dot--accent"></span>empirical (unbiased)</span>'
+        "</div>"
+        f"{_decay_curve(result)}"
+        "</div></section>"
+        f"{_overlay_section(overlay, trace_href)}"
+        '<section class="cols">'
+        f"{_judgment_panel(result)}"
+        f"{_failure_panel(result, failure_index)}"
+        "</section>"
+        f"{hud_shell_end()}"
+        f'<script type="application/json" id="chorus-failure-data">{json.dumps(failure_index)}</script>'
+        f"<script>{_fan_interaction_js()}</script>"
+    )
+    return head + body + document_close()
+
+
+def _failure_index(result: RunResult, trace_href: str | None) -> dict[str, list[dict[str, str]]]:
+    by_class: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for index, item in enumerate(result.trajectories):
+        if item.outcome == "pass":
+            continue
+        label = item.failure_class or item.outcome
+        link = ""
+        if trace_href:
+            link = f"{trace_href}#{item.trajectory_id}"
+        by_class[label].append(
+            {
+                "lane": f"#{index + 1:02d}",
+                "outcome": item.outcome,
+                "failure_class": item.failure_class or "—",
+                "trajectory_id": item.trajectory_id,
+                "trace_href": link,
+            }
+        )
+    return dict(by_class)
+
+
+def _fan_interaction_js() -> str:
+    return r"""
+(function () {
+  const dataEl = document.getElementById("chorus-failure-data");
+  const failureData = dataEl ? JSON.parse(dataEl.textContent || "{}") : {};
+
+  document.querySelectorAll("[data-failure-class]").forEach((seg) => {
+    seg.addEventListener("click", () => {
+      const label = seg.getAttribute("data-failure-class");
+      const items = failureData[label] || [];
+      let html = '<p class="lead">' + label + ' · ' + items.length + ' trajectory(ies)</p><ul class="modal-list">';
+      if (!items.length) {
+        html += "<li>none</li>";
+      } else {
+        items.forEach((item) => {
+          const link = item.trace_href
+            ? '<a href="' + item.trace_href + '">' + item.lane + " · trace</a>"
+            : item.lane;
+          html += "<li>" + link + " · " + item.outcome + " · " + item.failure_class + "</li>";
+        });
+      }
+      html += "</ul>";
+      chorusOpenModal("diagnosis · " + label, html);
+    });
+  });
+
+  document.querySelectorAll("[data-chorus-cell]").forEach((cell) => {
+    cell.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const state = cell.getAttribute("data-state") || "";
+      const step = cell.getAttribute("data-step") || "";
+      const lane = cell.getAttribute("data-lane") || "";
+      const sig = cell.getAttribute("data-signature") || "";
+      const html =
+        '<div class="modal-kv"><span class="k">lane</span><span>' + lane + "</span></div>" +
+        '<div class="modal-kv"><span class="k">step</span><span>s' + step + "</span></div>" +
+        '<div class="modal-kv"><span class="k">state</span><span>' + state + "</span></div>" +
+        '<div class="modal-kv"><span class="k">signature</span><span>' + sig + "</span></div>";
+      chorusOpenModal("overlay cell", html);
+    });
+  });
+
+  const summary = document.querySelector("[data-chorus-failures-summary]");
+  if (summary) {
+    summary.addEventListener("click", () => {
+      let html = '<p class="lead">click a diagnosis segment for per-class trajectories</p>';
+      const labels = Object.keys(failureData).sort((a, b) => failureData[b].length - failureData[a].length);
+      if (!labels.length) html = '<p class="lead">all trajectories passed</p>';
+      labels.forEach((label) => {
+        html += '<div class="modal-kv"><span class="k">' + label + "</span><span>" + failureData[label].length + " run(s)</span></div>";
+      });
+      chorusOpenModal("failure breakdown", html);
+    });
+  }
+})();
 """
 
 
@@ -150,9 +197,17 @@ def write_fan_html(
     return out
 
 
-def _metric_card(label: str, value: str, subline: str) -> str:
+def _metric_card(
+    label: str,
+    value: str,
+    subline: str,
+    *,
+    clickable: bool = False,
+    data_attrs: str = "",
+) -> str:
+    cls = "card card--clickable" if clickable else "card"
     return (
-        '<div class="card">'
+        f'<div class="{cls}"{data_attrs}>'
         f'<div class="label">{escape(label)}</div>'
         f'<div class="num">{escape(value)}</div>'
         f'<div class="sub">{escape(subline)}</div>'
@@ -163,7 +218,7 @@ def _metric_card(label: str, value: str, subline: str) -> str:
 def _decay_curve(result: RunResult) -> str:
     curve = result.metrics.curve
     if not curve:
-        return '<div class="panel sub">no reliability curve yet</div>'
+        return '<p class="sub">no reliability curve yet</p>'
     width = 1000
     height = 310
     left = 70
@@ -192,7 +247,7 @@ def _decay_curve(result: RunResult) -> str:
         )
     points = "\n".join(
         f'<circle cx="{xy(p.k, p.empirical)[0]:.1f}" cy="{xy(p.k, p.empirical)[1]:.1f}" '
-        'r="4" fill="var(--green)"/>'
+        'r="3.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1"/>'
         for p in curve
     )
     y_ticks = "\n".join(
@@ -218,13 +273,16 @@ def _decay_curve(result: RunResult) -> str:
 
 def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) -> str:
     if overlay is None:
-        return '<div class="panel sub">no event log available for divergence overlay</div>'
+        return (
+            '<section class="hud-widget"><div class="hud-widget__hd">divergence overlay</div>'
+            '<div class="hud-widget__bd"><p class="sub">no event log available</p></div></section>'
+        )
     if not overlay.steps:
-        return '<div class="panel sub">no runs yet - chorus run ... --n 30</div>'
+        return (
+            '<section class="hud-widget"><div class="hud-widget__hd">divergence overlay</div>'
+            '<div class="hud-widget__bd"><p class="sub">no runs yet — chorus run … --n 30</p></div></section>'
+        )
 
-    # Vertical bands, top to bottom: agreement bars (grow up to bar_base), the
-    # step labels, the divergence caption, then the cell grid. Keeping each in its
-    # own row stops the caption colliding with the bars and the first lanes.
     cell_w = 48
     cell_h = 28
     left = 110
@@ -243,7 +301,7 @@ def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) 
             '<rect class="div-band div-toggle" '
             "onclick=\"document.body.classList.toggle('split-only')\" "
             f'x="{x}" y="48" width="{cell_w - 6}" height="{grid_bottom - 48}">'
-            "<title>click to isolate the lanes that split here</title></rect>"
+            "<title>click to isolate lanes that split here</title></rect>"
             f'<text class="note" x="{x}" y="128">↑ divergence · step {div}</text>'
         )
     bars = "\n".join(
@@ -263,20 +321,24 @@ def _overlay_section(overlay: DivergenceOverlay | None, trace_href: str | None) 
         for index, trajectory_id in enumerate(overlay.trajectory_ids)
     )
     confidence = (
-        '<div class="sub">low confidence: fewer than 5 trajectories</div>'
+        '<p class="sub" style="margin:0 0 10px">low confidence: fewer than 5 trajectories</p>'
         if overlay.low_confidence
         else ""
     )
     return (
-        '<div class="panel">'
+        '<section class="hud-widget">'
+        '<div class="hud-widget__hd">divergence overlay · agreement strip + lanes</div>'
+        '<div class="hud-widget__bd t-skel" data-chorus-reveal>'
+        '<div class="t-skel-skeleton" aria-hidden="true"></div>'
+        '<div class="t-skel-content">'
         f"{confidence}"
         f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="divergence overlay">'
-        f'<rect class="overlay-bg" x="0" y="0" width="{width}" height="{height}" rx="8"/>'
+        f'<rect class="overlay-bg" x="0" y="0" width="{width}" height="{height}" rx="2"/>'
         f"{band}{bars}{step_labels}{labels}{cells}"
         '<text class="axis" x="42" y="76">agree</text>'
         f'<text class="axis" x="42" y="{height - 13}">'
         "converged / diverged / failed / inactive</text>"
-        "</svg></div>"
+        "</svg></div></div></section>"
     )
 
 
@@ -285,8 +347,8 @@ def _agreement_bar(x: int, value: float | None, cell_w: int, base: int = 92) -> 
         return f'<rect class="inactive" x="{x}" y="{base - 24}" width="{cell_w - 8}" height="24"/>'
     height = max(3, int(value * 40))
     y = base - height
-    fill = "#10b981" if value >= 1.0 else "#f59e0b"
-    return f'<rect x="{x}" y="{y}" width="{cell_w - 8}" height="{height}" rx="3" fill="{fill}"/>'
+    fill = "#3d3d38" if value >= 1.0 else "#c45c00"
+    return f'<rect x="{x}" y="{y}" width="{cell_w - 8}" height="{height}" rx="1" fill="{fill}"/>'
 
 
 def _lane_label(trajectory_id: str, index: int, y: int, trace_href: str | None) -> str:
@@ -309,81 +371,98 @@ def _overlay_cell(
     x = left + cell.step * cell_w
     row_index = row_map[cell.trajectory_id]
     y = top + row_index * cell_h
-    title = escape(signature_label(cell.signature))
+    sig = escape(signature_label(cell.signature))
+    lane = f"#{row_index + 1:02d}"
+    data = (
+        f'data-chorus-cell="1" data-state="{escape(cell.state)}" '
+        f'data-step="{cell.step}" data-lane="{lane}" data-signature="{sig}"'
+    )
     if cell.state == "inactive":
-        rect = f'<rect class="cell inactive" x="{x}" y="{y}" width="{cell_w - 8}" height="20"/>'
+        rect = (
+            f'<rect class="cell inactive" {data} x="{x}" y="{y}" '
+            f'width="{cell_w - 8}" height="20"/>'
+        )
     else:
         rect = (
-            f'<rect class="cell" x="{x}" y="{y}" width="{cell_w - 8}" height="20" '
+            f'<rect class="cell" {data} x="{x}" y="{y}" width="{cell_w - 8}" height="20" '
             f'fill="{_FILL.get(cell.state, "#334155")}"/>'
         )
     outline = (
-        f'<rect class="div-outline" x="{x}" y="{y}" width="{cell_w - 8}" height="20" rx="4"/>'
+        f'<rect class="div-outline" x="{x}" y="{y}" width="{cell_w - 8}" height="20" rx="2"/>'
         if div == cell.step
         else ""
     )
     classes = ["cellwrap"]
     if div == cell.step and not cell.in_majority:
         classes.append("split")
-    return f'<g class="{" ".join(classes)}"><title>{title}</title>{rect}{outline}</g>'
+    return f'<g class="{" ".join(classes)}">{rect}{outline}</g>'
 
 
 def _judgment_panel(result: RunResult) -> str:
     summary = result.judge_summary
     if not summary:
         return (
-            '<div class="panel"><div class="label">judgment</div>'
-            '<div class="sub">not run</div></div>'
+            '<div class="hud-widget"><div class="hud-widget__hd">judgment</div>'
+            '<div class="hud-widget__bd"><p class="sub">not run</p></div></div>'
         )
     baseline = float(summary.get("baseline_cost_usd", 0.0))
     cascade = float(summary.get("cascade_cost_usd", 0.0))
     ratio = float(summary.get("cost_ratio", 0.0))
     tier_hits = summary.get("tier_hits", {})
     return (
-        '<div class="panel">'
-        '<div class="label">judgment cascade</div>'
-        '<div class="sub">synthetic-validated &mdash; real accuracy-parity number'
-        " lands in Phase 5</div>"
+        '<div class="hud-widget">'
+        '<div class="hud-widget__hd">judgment cascade</div>'
+        '<div class="hud-widget__bd">'
+        '<p class="sub">synthetic-validated — real accuracy-parity lands in Phase 5</p>'
         f'<div class="kv"><span class="k">cost ratio</span><span>{ratio:.2f}</span></div>'
         f'<div class="kv"><span class="k">judge-every-run</span><span>${baseline:.4f}</span></div>'
         f'<div class="kv"><span class="k">cascade</span><span>${cascade:.4f}</span></div>'
         '<div class="kv"><span class="k">tier hits</span>'
         f"<span>{escape(str(tier_hits))}</span></div>"
         f'<div class="kv"><span class="k">escalations</span><span>{result.escalations}</span></div>'
-        "</div>"
+        "</div></div>"
     )
 
 
-def _failure_panel(result: RunResult) -> str:
+def _failure_panel(result: RunResult, failure_index: dict[str, list[dict[str, str]]]) -> str:
     counts = Counter(
         item.failure_class or item.outcome for item in result.trajectories if item.outcome != "pass"
     )
     if not counts:
-        rows = '<div class="sub">all trajectories passed</div>'
+        rows = '<p class="sub">all trajectories passed</p>'
     else:
         total = sum(counts.values())
         segs = "".join(
-            '<span class="seg" style="'
-            f"width:{(count / total) * 100:.1f}%;"
-            f'background:{_class_color(label)}"></span>'
+            '<span class="seg" data-failure-class="'
+            f'{escape(label)}" style="width:{(count / total) * 100:.1f}%;'
+            f'background:{_class_color(label)}" title="{escape(label)}: {count}"></span>'
             for label, count in counts.items()
         )
         items = "".join(
             f'<div class="kv"><span class="k">{escape(label)}</span><span>{count}</span></div>'
             for label, count in counts.items()
         )
-        rows = f'<div class="bar">{segs}</div>{items}'
-    return f'<div class="panel"><div class="label">diagnosis</div>{rows}</div>'
+        rows = (
+            f'<p class="sub" style="margin:0 0 8px">click a segment for trajectory list</p>'
+            f'<div class="bar">{segs}</div>{items}'
+        )
+    return (
+        '<div class="hud-widget">'
+        '<div class="hud-widget__hd">diagnosis</div>'
+        f'<div class="hud-widget__bd">{rows}</div></div>'
+    )
 
 
 def _class_color(label: str) -> str:
     return {
-        "tool_error": "#f59e0b",
-        "schema_mismatch": "#ef4444",
-        "context_drift": "#a78bfa",
-        "nondeterministic_loop": "#38bdf8",
-        "budget_exceeded": "#fb7185",
-        "timeout": "#f97316",
-        "contract_violation": "#dc2626",
-        "unknown": "#64748b",
-    }.get(label, "#64748b")
+        "tool_error": "#c45c00",
+        "schema_mismatch": "#e8192a",
+        "context_drift": "#5a5a56",
+        "nondeterministic_loop": "#3d3d38",
+        "budget_exceeded": "#a01020",
+        "timeout": "#8a4020",
+        "contract_violation": "#e8192a",
+        "unknown": "#8a8a84",
+        "fail": "#e8192a",
+        "error": "#c45c00",
+    }.get(label, "#8a8a84")

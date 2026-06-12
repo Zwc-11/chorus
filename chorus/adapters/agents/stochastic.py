@@ -114,6 +114,8 @@ class StochasticAgent:
             # A failing shell command: recorded as an execute_tool span that errors.
             return await gateway.call("bash", {"command": "pytest -q", "fail": True})
         if will_pass:
+            if task.metadata.get("acceptance"):
+                return await gateway.call("submit", {"artifact": _simulated_hard_pass(task)})
             return await gateway.call("transform", {"text": task.prompt})
         return await gateway.call("emit", {"text": task.prompt})
 
@@ -146,7 +148,28 @@ def stochastic_tools() -> dict[str, Callable[[dict[str, Any]], Any]]:
         "edit": lambda args: args["text"],
         "transform": lambda args: args["text"].upper(),
         "emit": lambda args: args["text"],
+        "submit": lambda args: args["artifact"],
+        "write_file": lambda args: f"wrote {args['path']}",
     }
+
+
+def _simulated_hard_pass(task: TaskSpec) -> str:
+    """Minimal artifact that satisfies :func:`chorus.core.acceptance.hard_website_accepts`."""
+
+    del task
+    return """=== index.html ===
+<!DOCTYPE html>
+<html lang="en"><head><link rel="stylesheet" href="styles.css"></head>
+<body><header class="hero"><h1>chorus reliability harness</h1></header>
+<section id="metrics">
+  <span>pass@1 0.82</span><span>pass^k 0.41</span><span>variance 0.19</span>
+</section>
+</body></html>
+=== styles.css ===
+:root { --bg: #e4e4e0; --accent: #e8192a; }
+body { background: var(--bg); color: #0a0a0a; letter-spacing: 0.08em; }
+#metrics { font-family: monospace; border: 1px solid var(--accent); }
+"""
 
 
 def stochastic_agent_factory(

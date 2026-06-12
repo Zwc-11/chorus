@@ -11,10 +11,12 @@ credibility of "changing only the harness moved pass^k" depends on that. The two
 built-in scaffolds (:mod:`.scaffold`) differ in exactly one dimension: a
 self-repair turn.
 
-Nothing here calls a model or Docker at import time. The real model
-(:class:`.model.AnthropicPatchModel`) and the real evaluator
+Nothing here calls a model or Docker at import time. Real patch models
+(:class:`.model.AnthropicPatchModel`, :class:`.model.DeepSeekPatchModel`, or
+:func:`.providers.create_patch_model`) and the real evaluator
 (:class:`.evaluator.SubprocessSweEvaluator`) import their heavy dependencies
 lazily and raise a clear error if they are missing, so the package -- and its
 tests, which inject fakes -- run offline at zero cost. Producing the actual number
-needs ``ANTHROPIC_API_KEY`` + Docker + ``pip install 'chorus-harness[bench]'``.
+needs ``DEEPSEEK_API_KEY`` or ``ANTHROPIC_API_KEY`` + Docker +
+``pip install 'chorus-harness[bench]'``.
 """

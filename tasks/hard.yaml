@@ -1,0 +1,9 @@
+# Hard agent task — marketing site with strict acceptance checks.
+task_id: hard.landing_site
+acceptance: hard_website_v1
+metadata:
+  kind: hard_website
+  difficulty: 0.12
+prompt: |
+  Build a complete, production-quality single-page marketing website for Chorus.
+  See chorus/core/agent_tasks.py for the full prompt used by `chorus --task hard`.

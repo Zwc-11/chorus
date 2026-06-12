@@ -97,7 +97,7 @@ class SubprocessSweEvaluator:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         preds_path = write_predictions(
             predictions, self.run_dir / f"preds__{run_id}.jsonl", model_tag=self.model_tag
-        )
+        ).resolve()
         cmd = [
             sys.executable,
             "-m",
@@ -123,6 +123,18 @@ class SubprocessSweEvaluator:
     def _ensure_swebench(self) -> None:
         try:
             import swebench  # noqa: F401
+        except ModuleNotFoundError as exc:
+            if exc.name == "resource":
+                raise BenchDependencyMissing(
+                    "swebench is installed, but the official SWE-bench harness imports "
+                    "Python's Unix-only `resource` module and does not run under native "
+                    "Windows Python. Run `chorus bench` from WSL/Linux, with Docker "
+                    "Desktop WSL integration enabled."
+                ) from exc
+            raise BenchDependencyMissing(
+                "swebench is not installed; `pip install 'chorus-harness[bench]'` and ensure "
+                "Docker is running. See https://github.com/princeton-nlp/SWE-bench."
+            ) from exc
         except ImportError as exc:
             raise BenchDependencyMissing(
                 "swebench is not installed; `pip install 'chorus-harness[bench]'` and ensure "

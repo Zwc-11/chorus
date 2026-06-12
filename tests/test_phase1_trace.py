@@ -142,3 +142,19 @@ def test_emitter_drives_port_with_balanced_nesting() -> None:
     # Every non-root span names a parent that was opened.
     opened = {s.name for s in collector.spans}
     assert all(s.parent in opened for s in collector.spans if s.parent is not None)
+
+
+def test_emitter_records_gen_ai_metrics() -> None:
+    events = record(success_rate=1.0, error_rate=0.0)
+    trace = events_to_traces(events)[0]
+    collector = InMemoryTraceCollector()
+    emit_trace(trace, collector)
+
+    names = [metric.name for metric in collector.metrics]
+    assert "gen_ai.client.operation.duration" in names
+    assert "gen_ai.client.token.usage" in names
+
+    token_metrics = [m for m in collector.metrics if m.name == "gen_ai.client.token.usage"]
+    token_types = {metric.attributes["gen_ai.token.type"] for metric in token_metrics}
+    assert token_types == {"input", "output"}
+    assert all(metric.value > 0 for metric in token_metrics)

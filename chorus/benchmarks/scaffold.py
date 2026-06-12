@@ -13,6 +13,7 @@ scaffold alone -- the whole point of "changing only the harness."
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,7 +21,9 @@ from dataclasses import dataclass
 from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochastic_tools
 from chorus.adapters.storage.memory import InMemoryEventStore
 from chorus.benchmarks.loader import SUITE_VERSION
+from chorus.benchmarks.swe.types import PrimableJudge, SwePrediction
 from chorus.core.conductor import RunConductor
+from chorus.core.events import Event
 from chorus.core.ports import AgentPort, JudgePort
 from chorus.core.results import result_from_events
 from chorus.core.suite import SuiteResult, TaskReliability
@@ -92,7 +95,7 @@ async def run_judged_suite(
     tasks: list[TaskSpec],
     *,
     agent_factory: Callable[[int], AgentPort],
-    judge: JudgePort,
+    judge: JudgePort | None = None,
     n: int,
     seed: int,
     branch: str,
@@ -138,6 +141,102 @@ async def run_judged_suite(
         commit=commit,
         tasks=tuple(reliabilities),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskCtx:
+    task: TaskSpec
+    conductor: RunConductor
+    store: InMemoryEventStore
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class JudgedRun:
+    """A batched judged-suite result plus the recorded events for the trace view."""
+
+    suite: SuiteResult
+    events: dict[str, list[Event]]  # task_id -> recorded events
+
+
+async def run_judged_suite_batched(
+    tasks: list[TaskSpec],
+    *,
+    agent_factory: Callable[[int], AgentPort],
+    judge: PrimableJudge,
+    n: int,
+    seed: int,
+    branch: str,
+    suite_version: str,
+    scaffold: str,
+    tools: dict[str, ToolCallable] | None = None,
+    commit: str = "",
+    concurrent_agents: bool = True,
+) -> JudgedRun:
+    """Traced **and** batched: run every agent through the conductor (so each
+    trajectory is recorded), but evaluate each attempt's patches across all
+    instances in one harness run, then finalize from the primed cache.
+
+    This is the reconciliation of the two earlier paths: it keeps the trace/replay/
+    diagnosis of the integrated path and the per-attempt batch parallelism of
+    ``chorus bench``. Judging batches *across instances within an attempt* (one
+    patch per instance per harness run) -- the only shape the SWE-bench harness
+    accepts, since it keys predictions by ``instance_id``.
+    """
+
+    contexts: list[_TaskCtx] = []
+    for task_index, task in enumerate(tasks):
+        def lane_factory(lane: int, task_index: int = task_index) -> AgentPort:
+            return agent_factory(seed + task_index * SEED_STRIDE + lane)
+
+        store = InMemoryEventStore()
+        conductor = RunConductor(
+            agent_factory=lane_factory, storage=store, tools=tools or {}, judge=judge,
+            concurrent=False,
+        )
+        run_id = await conductor.begin_run(task, n)
+        contexts.append(_TaskCtx(task, conductor, store, run_id))
+
+    for attempt in range(n):
+        # Phase 1: run each task's agent for this attempt; the trace is recorded.
+        coros = [
+            ctx.conductor.run_agent_deferred(ctx.task, ctx.run_id, attempt) for ctx in contexts
+        ]
+        if concurrent_agents:
+            pendings = list(await asyncio.gather(*coros))
+        else:
+            pendings = [await coro for coro in coros]
+        # Phase 2: evaluate this attempt's patches across all instances in one run.
+        predictions = [
+            SwePrediction(ctx.task.task_id, pending.output)
+            for ctx, pending in zip(contexts, pendings, strict=True)
+            if not pending.error
+        ]
+        if predictions:
+            judge.prime(predictions, run_id=f"{scaffold}-a{attempt}")
+        # Phase 3: finalize each trajectory from the now-primed cache.
+        for ctx, pending in zip(contexts, pendings, strict=True):
+            outcome = "error" if pending.error else await judge.judge(ctx.task, pending.output)
+            await ctx.conductor.finalize_trajectory(ctx.task, pending, outcome)
+
+    reliabilities: list[TaskReliability] = []
+    events_by_task: dict[str, list[Event]] = {}
+    for ctx in contexts:
+        result = await ctx.conductor.complete_run(ctx.task, ctx.run_id)
+        reliabilities.append(_task_reliability(ctx.task.task_id, result))
+        events_by_task[ctx.task.task_id] = list(await ctx.store.read_events())
+
+    suite = SuiteResult(
+        suite_version=suite_version,
+        branch=branch,
+        n=n,
+        seed=seed,
+        seed_policy="per-attempt",
+        scaffold=scaffold,
+        commit=commit,
+        tasks=tuple(reliabilities),
+    )
+    return JudgedRun(suite=suite, events=events_by_task)
 
 
 def _task_reliability(task_id: str, result: RunResult) -> TaskReliability:

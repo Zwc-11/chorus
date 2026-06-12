@@ -11,12 +11,13 @@ import asyncio
 
 from chorus.adapters.agents.swe import SwePatchAgent
 from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.benchmarks.scaffold import run_judged_suite
+from chorus.benchmarks.scaffold import run_judged_suite, run_judged_suite_batched
 from chorus.benchmarks.swe.judge import SweBenchJudge
 from chorus.benchmarks.swe.types import ModelResponse, SweOutcome, SwePrediction
 from chorus.core.conductor import RunConductor
 from chorus.core.events import EventType
 from chorus.core.types import TaskSpec
+from chorus.trace.mapper import events_to_traces
 
 
 def _run(value):
@@ -161,3 +162,52 @@ def test_run_judged_suite_folds_into_suite_result() -> None:
     assert suite.scaffold == "single-shot"
     assert suite.n == 3
     assert suite.suite_version == "swe-bench-verified-subset2"
+
+
+def test_batched_runner_batches_judging_across_instances_and_records_traces() -> None:
+    tasks = [_task("a"), _task("b"), _task("c")]
+    model = FakePatchModel()
+    evaluator = ScriptedEvaluator(resolve={"a", "b"})
+
+    run = _run(
+        run_judged_suite_batched(
+            tasks,
+            agent_factory=lambda s: SwePatchAgent(model, seed=s),
+            judge=SweBenchJudge(evaluator),
+            n=4,
+            seed=0,
+            branch="bench",
+            suite_version="swe-bench-verified-subset3",
+            scaffold="single-shot",
+        )
+    )
+
+    by_id = run.suite.task_map()
+    assert by_id["a"].passes == 4 and by_id["b"].passes == 4 and by_id["c"].passes == 0
+    # One batch evaluation per attempt (4), not one per (task, attempt) (which is 12).
+    assert evaluator.calls == 4
+    assert run.suite.seed_policy == "per-attempt"
+    # Every task's run is recorded -> a trace exists for each.
+    assert set(run.events) == {"a", "b", "c"}
+    assert any(e.type == EventType.MODEL_CALL for e in run.events["a"])
+    assert any(e.type == EventType.VERDICT for e in run.events["a"])
+
+
+def test_batched_run_events_project_to_traces() -> None:
+    tasks = [_task("a")]
+    model = FakePatchModel()
+    run = _run(
+        run_judged_suite_batched(
+            tasks,
+            agent_factory=lambda s: SwePatchAgent(model, repair=True, seed=s),
+            judge=SweBenchJudge(ScriptedEvaluator(resolve=set())),
+            n=2,
+            seed=0,
+            branch="bench",
+            suite_version="swe-bench-verified-subset1",
+            scaffold="self-repair",
+        )
+    )
+    traces = events_to_traces(run.events["a"])
+    assert len(traces) == 2  # two attempts -> two trajectories
+    assert sum(t.total_tokens for t in traces) > 0  # model calls were recorded

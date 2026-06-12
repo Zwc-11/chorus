@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from chorus.report.ui_theme import document_close, document_head, hud_shell_end, hud_shell_start
 from chorus.trace.spans import Trace
 
 
@@ -52,9 +53,10 @@ def _jsonable(value: object) -> object:
 
 
 def render_traces_html(traces: list[Trace], *, run_id: str = "") -> str:
-    data = json.dumps([_trace_to_json(t) for t in traces])
+    payload = [_trace_to_json(t) for t in traces]
+    data = json.dumps(payload)
     run_label = run_id or (traces[0].run_id if traces else "")
-    return _TEMPLATE.replace("__DATA__", data).replace("__RUN__", run_label)
+    return _build_template(data, run_label, n_traces=len(payload))
 
 
 def write_traces_html(traces: list[Trace], path: Path | str, *, run_id: str = "") -> Path:
@@ -64,139 +66,278 @@ def write_traces_html(traces: list[Trace], path: Path | str, *, run_id: str = ""
     return out
 
 
-_TEMPLATE = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>Chorus trace viewer</title>
-<style>
-  :root {
-    --bg:#0b1020; --panel:#0f1629; --panel2:#111a30; --line:#1e293b;
-    --txt:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
-    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    --sans: ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
-    --ok:#22c55e; --err:#ef4444; --warn:#f59e0b; --info:#38bdf8;
-    --model:#a78bfa; --tool:#38bdf8; --run:#94a3b8; --step:#64748b;
-  }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--txt); font-family:var(--sans);
-         font-size:13px; height:100vh; overflow:hidden; }
-  .grid { display:grid; grid-template-columns:240px 1fr 320px; height:100vh; }
-  .col { overflow:auto; height:100vh; }
-  .rail { background:var(--panel); border-right:1px solid var(--line); }
-  .center { background:var(--bg); }
-  .inspector { background:var(--panel); border-left:1px solid var(--line); }
-  .hd { padding:12px 14px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
-        color:var(--muted); border-bottom:1px solid var(--line); position:sticky; top:0;
-        background:inherit; z-index:2; }
-  .traj { display:flex; align-items:center; gap:8px; padding:9px 14px; cursor:pointer;
-          border-left:2px solid transparent; }
-  .traj:hover { background:var(--panel2); }
-  .traj.sel { background:var(--panel2); border-left-color:var(--info); }
-  .dot { width:9px; height:9px; border-radius:50%; flex:none; }
-  .traj .id { font-family:var(--mono); }
-  .traj .dur { margin-left:auto; font-family:var(--mono); color:var(--dim); font-size:12px; }
-  .ok{background:var(--ok)} .fail{background:var(--err)} .error{background:var(--warn)}
-  .runhdr { display:flex; gap:18px; padding:10px 16px; border-bottom:1px solid var(--line);
-            font-family:var(--mono); color:var(--muted); font-size:12px; align-items:center; }
-  .runhdr b { color:var(--txt); }
-  .replaybadge { color:var(--warn); border:1px solid var(--warn); border-radius:4px;
-                 padding:1px 6px; font-size:11px; }
-  .rows { padding:6px 0; }
-  .row { display:grid; grid-template-columns:260px 1fr 150px; align-items:center;
-         gap:10px; padding:3px 16px; cursor:pointer; border:1px solid transparent; }
-  .row:hover { background:var(--panel2); }
-  .row.sel { background:var(--panel2); border-color:var(--line); }
-  .row.err { background:rgba(239,68,68,.08); }
-  .nm { display:flex; align-items:center; gap:7px; font-size:12.5px; white-space:nowrap;
-        overflow:hidden; text-overflow:ellipsis; }
-  .ic { font-family:var(--mono); width:14px; text-align:center; flex:none; }
-  .ic.model{color:var(--model)} .ic.tool{color:var(--tool)} .ic.run{color:var(--run)}
-  .ic.step{color:var(--step)} .ic.contract{color:var(--muted)}
-  .track { position:relative; height:14px; background:var(--panel); border-radius:3px; }
-  .bar { position:absolute; top:0; height:14px; border-radius:3px; min-width:2px; opacity:.85; }
-  .bar.model{background:var(--model)} .bar.tool{background:var(--tool)}
-  .bar.run{background:var(--run)} .bar.step{background:#334155}
-  .bar.err{background:var(--err); outline:1px solid #fecaca; opacity:1; }
-  .tail { font-family:var(--mono); font-size:11px; color:var(--dim); text-align:right;
-          white-space:nowrap; }
-  .ins { padding:14px 16px; }
-  .ins h3 { margin:0 0 2px; font-size:13px; }
-  .ins .sub { color:var(--muted); font-family:var(--mono); font-size:11px; margin-bottom:14px; }
-  .kv { margin:0 0 11px; }
-  .kv .k { color:var(--muted); font-size:11px; font-family:var(--mono); }
-  .kv .v { color:var(--txt); font-family:var(--mono); font-size:12.5px; word-break:break-word; }
-  .kv .v.err { color:var(--err); }
-  .empty { display:flex; height:100vh; align-items:center; justify-content:center;
-           color:var(--muted); font-family:var(--mono); }
-  .hint { color:var(--dim); }
-</style>
-</head>
-<body>
-<div id="app"></div>
-<script>
-const TRACES = __DATA__;
-const RUN = "__RUN__";
-const ICON = { run:"▢", step:"›", model:"✦", tool:"▤", contract:"✓" };
-let sel = { traj:indexFromHash(), span:0 };
+_TRACE_EXTRA_CSS = r"""
+body { overflow: hidden; }
+.hud-main { max-width: none; padding: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.trace-app { flex: 1; min-height: 0; }
+.grid {
+  display: grid;
+  grid-template-columns: 220px 1fr 300px;
+  height: calc(100vh - 168px);
+  min-height: 420px;
+}
+.col { overflow: auto; height: 100%; }
+.rail {
+  background: var(--panel);
+  border-right: var(--hud-border);
+  backdrop-filter: blur(10px);
+}
+.center { background: transparent; }
+.inspector {
+  background: var(--panel);
+  border-left: var(--hud-border);
+  backdrop-filter: blur(10px);
+}
+.hd {
+  padding: 11px 14px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: var(--hud-border);
+  position: sticky;
+  top: 0;
+  background: inherit;
+  z-index: 2;
+}
+.traj {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.traj:hover { background: var(--panel2); }
+.traj.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; border: 1px solid var(--line-strong); }
+.traj .id { font-family: var(--mono); font-size: 12px; }
+.traj .dur { margin-left: auto; font-family: var(--mono); color: var(--dim); font-size: 11px; }
+.ok { background: var(--txt); }
+.fail { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+.error { background: var(--warn); border-color: var(--warn); }
+.runhdr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: var(--hud-border);
+  font-family: var(--mono);
+  color: var(--muted);
+  font-size: 11px;
+  align-items: center;
+  background: var(--panel2);
+}
+.runhdr b { color: var(--txt); font-weight: 500; }
+.replaybadge {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.rows { padding: 4px 0; }
+.row {
+  display: grid;
+  grid-template-columns: 240px 1fr 140px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.row:hover { background: var(--panel2); }
+.row.sel { background: var(--accent-soft); border-color: var(--line); }
+.row.err { background: rgba(232, 25, 42, 0.08); }
+.nm {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ic { font-family: var(--mono); width: 14px; text-align: center; flex: none; color: var(--muted); }
+.ic.model { color: var(--txt); }
+.ic.tool { color: var(--dim); }
+.track {
+  position: relative;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 1px;
+}
+.bar {
+  position: absolute;
+  top: 0;
+  height: 12px;
+  border-radius: 1px;
+  min-width: 2px;
+  opacity: 0.9;
+}
+.bar.model { background: var(--txt); }
+.bar.tool { background: var(--dim); }
+.bar.run { background: #8a8a84; }
+.bar.step { background: #c4c4be; }
+.bar.err {
+  background: var(--accent);
+  outline: 1px solid var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.tail {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  text-align: right;
+  white-space: nowrap;
+}
+.ins { padding: 14px 16px; }
+.ins h3 { margin: 0 0 2px; font-size: 13px; font-weight: 500; }
+.ins .sub { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-bottom: 12px; }
+.kv { margin: 0 0 10px; }
+.kv .k { color: var(--muted); font-size: 10px; font-family: var(--mono); letter-spacing: 0.04em; }
+.kv .v { color: var(--txt); font-family: var(--mono); font-size: 12px; word-break: break-word; }
+.kv .v.err { color: var(--accent); }
+.ins-actions { margin-top: 14px; }
+.ins-open {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.ins-open:hover { border-color: var(--accent); color: var(--accent); }
+.empty {
+  display: flex;
+  height: calc(100vh - 120px);
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+}
+.hint { color: var(--dim); }
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; height: auto; }
+  body { overflow: auto; }
+}
+"""
 
-function fmtMs(ms){ return ms >= 1000 ? (ms/1000).toFixed(2)+"s" : ms.toFixed(0)+"ms"; }
-function el(html){ const t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstChild; }
-function indexFromHash(){
+
+def _build_template(data_json: str, run_label: str, *, n_traces: int) -> str:
+    run_line = (
+        f"trace · {run_label} · {n_traces} trajectories"
+        if n_traces
+        else "trace · no data"
+    )
+    head = document_head(title=f"Chorus trace — {run_label}", extra_css=_TRACE_EXTRA_CSS)
+    shell = hud_shell_start(
+        brand="chorus",
+        run_line=run_line,
+        quote="Keep running — latency is spatial, never a number you parse.",
+    )
+    body = (
+        f"{shell}"
+        '<div id="app" class="trace-app t-skel" data-chorus-reveal>'
+        '<div class="t-skel-skeleton" aria-hidden="true"></div>'
+        '<div class="t-skel-content" id="app-inner"></div>'
+        "</div>"
+        f"{hud_shell_end(footer_left='trace')}"
+    )
+    script = f"""
+const TRACES = {data_json};
+const RUN = {json.dumps(run_label)};
+const ICON = {{ run:"▢", step:"›", model:"✦", tool:"▤", contract:"✓" }};
+let sel = {{ traj:indexFromHash(), span:0 }};
+
+function fmtMs(ms){{ return ms >= 1000 ? (ms/1000).toFixed(2)+"s" : ms.toFixed(0)+"ms"; }}
+function el(html){{ const t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstChild; }}
+function esc(s){{ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }}
+
+function indexFromHash(){{
   const target = decodeURIComponent(location.hash.replace(/^#/, ""));
   const index = TRACES.findIndex(t => t.trajectory_id === target);
   return index >= 0 ? index : 0;
-}
-window.addEventListener("hashchange", () => {
+}}
+window.addEventListener("hashchange", () => {{
   const index = indexFromHash();
-  if(index !== sel.traj){ sel={traj:index, span:0}; render(); }
-});
+  if(index !== sel.traj){{ sel={{traj:index, span:0}}; render(); }}
+}});
 
-function render(){
-  const app = document.getElementById("app");
-  app.innerHTML = "";
-  if(!TRACES.length){
-    app.appendChild(el(`<div class="empty">no runs yet &mdash; <span class="hint">&nbsp;chorus run &hellip;</span></div>`));
+function spanModalHtml(t, s){{
+  const entries = Object.entries(s.attributes);
+  entries.push(["span_id", s.span_id]);
+  entries.push(["trace_id", t.trace_id]);
+  entries.push(["status", s.status]);
+  let rows = '<p class="lead">' + esc(s.kind) + ' · ' + fmtMs(s.duration_ms) + ' @ ' + fmtMs(s.start_ms) + '</p>';
+  for (const [k,v] of entries) {{
+    const val = Array.isArray(v) ? v.join(", ") : String(v);
+    const err = (k==="status" && v==="error") || k==="chorus.failure.class";
+    rows += '<div class="modal-kv"><span class="k">' + esc(k) + '</span><span class="' + (err ? "err" : "") + '">' + esc(val) + '</span></div>';
+  }}
+  return rows;
+}}
+
+function openSpanModal(){{
+  const t = TRACES[sel.traj];
+  const s = t.spans[sel.span];
+  chorusOpenModal("span · " + s.name, spanModalHtml(t, s));
+}}
+
+function render(){{
+  const mount = document.getElementById("app-inner");
+  if (!mount) return;
+  mount.innerHTML = "";
+  if(!TRACES.length){{
+    mount.appendChild(el(`<div class="empty">no runs yet &mdash; <span class="hint">chorus trace &hellip;</span></div>`));
     return;
-  }
+  }}
   const grid = el(`<div class="grid"></div>`);
   grid.appendChild(renderRail());
   grid.appendChild(renderCenter());
   grid.appendChild(renderInspector());
-  app.appendChild(grid);
-}
+  mount.appendChild(grid);
+}}
 
-function renderRail(){
+function renderRail(){{
   const rail = el(`<div class="col rail"></div>`);
-  rail.appendChild(el(`<div class="hd">trajectories &middot; ${TRACES.length}</div>`));
-  TRACES.forEach((t,i)=>{
+  rail.appendChild(el(`<div class="hd">trajectories · ${{TRACES.length}}</div>`));
+  TRACES.forEach((t,i)=>{{
     const cls = t.outcome==="pass"?"ok":(t.outcome==="error"?"error":"fail");
     const sl = i===sel.traj?" sel":"";
     const rep = t.replay?` <span class="ic">↻</span>`:"";
-    const row = el(`<div class="traj${sl}"><span class="dot ${cls}"></span>`+
-      `<span class="id">#${String(i+1).padStart(2,"0")}${rep}</span>`+
-      `<span class="dur">${fmtMs(t.total_ms)}</span></div>`);
-    row.onclick = ()=>{
-      sel={traj:i, span:0};
+    const row = el(`<div class="traj${{sl}}"><span class="dot ${{cls}}"></span>`+
+      `<span class="id">#${{String(i+1).padStart(2,"0")}}${{rep}}</span>`+
+      `<span class="dur">${{fmtMs(t.total_ms)}}</span></div>`);
+    row.onclick = ()=>{{
+      sel={{traj:i, span:0}};
       history.replaceState(null, "", "#"+encodeURIComponent(t.trajectory_id));
       render();
-    };
+    }};
     rail.appendChild(row);
-  });
+  }});
   return rail;
-}
+}}
 
-function renderCenter(){
+function renderCenter(){{
   const t = TRACES[sel.traj];
   const col = el(`<div class="col center"></div>`);
   const rep = t.replay?`<span class="replaybadge">↻ replayed</span>`:"";
-  col.appendChild(el(`<div class="runhdr"><span>trajectory <b>#${String(sel.traj+1).padStart(2,"0")}</b></span>`+
-    `<span><b>${fmtMs(t.total_ms)}</b></span>`+
-    `<span><b>${(t.total_tokens/1000).toFixed(1)}k</b> tok</span>`+
-    `<span><b>$${t.total_cost_usd.toFixed(3)}</b></span>${rep}</div>`));
+  col.appendChild(el(`<div class="runhdr"><span>trajectory <b>#${{String(sel.traj+1).padStart(2,"0")}}</b></span>`+
+    `<span><b>${{fmtMs(t.total_ms)}}</b></span>`+
+    `<span><b>${{(t.total_tokens/1000).toFixed(1)}}k</b> tok</span>`+
+    `<span><b>$${{t.total_cost_usd.toFixed(3)}}</b></span>${{rep}}</div>`));
   const rows = el(`<div class="rows"></div>`);
   const total = t.total_ms || 1;
-  t.spans.forEach((s,i)=>{
+  t.spans.forEach((s,i)=>{{
     const sl = i===sel.span?" sel":"";
     const errRow = s.status==="error"?" err":"";
     const left = (s.start_ms/total)*100;
@@ -204,54 +345,56 @@ function renderCenter(){
     const barCls = s.status==="error"?"err":s.kind;
     const pad = 8 + s.depth*16;
     const tail = spanTail(s);
-    const row = el(`<div class="row${sl}${errRow}">`+
-      `<div class="nm" style="padding-left:${pad}px"><span class="ic ${s.kind}">${ICON[s.kind]||"•"}</span>`+
-      `<span>${s.name}</span></div>`+
-      `<div class="track"><div class="bar ${barCls}" style="left:${left}%;width:${width}%"></div></div>`+
-      `<div class="tail">${tail}</div></div>`);
-    row.onclick = ()=>{ sel.span=i; render(); };
+    const row = el(`<div class="row${{sl}}${{errRow}}">`+
+      `<div class="nm" style="padding-left:${{pad}}px"><span class="ic ${{s.kind}}">${{ICON[s.kind]||"•"}}</span>`+
+      `<span>${{s.name}}</span></div>`+
+      `<div class="track"><div class="bar ${{barCls}}" style="left:${{left}}%;width:${{width}}%"></div></div>`+
+      `<div class="tail">${{tail}}</div></div>`);
+    row.onclick = ()=>{{ sel.span=i; render(); }};
+    row.ondblclick = (e)=>{{ e.preventDefault(); sel.span=i; openSpanModal(); }};
     rows.appendChild(row);
-  });
+  }});
   col.appendChild(rows);
   return col;
-}
+}}
 
-function spanTail(s){
+function spanTail(s){{
   const a = s.attributes;
-  if(s.kind==="model"){
+  if(s.kind==="model"){{
     const tok = (a["gen_ai.usage.input_tokens"]||0)+(a["gen_ai.usage.output_tokens"]||0);
-    return `${tok} tok &middot; ${fmtMs(s.duration_ms)}`;
-  }
-  if(s.kind==="tool"){ return `${a["gen_ai.tool.name"]||""} &middot; ${fmtMs(s.duration_ms)}`; }
+    return `${{tok}} tok · ${{fmtMs(s.duration_ms)}}`;
+  }}
+  if(s.kind==="tool"){{ return `${{a["gen_ai.tool.name"]||""}} · ${{fmtMs(s.duration_ms)}}`; }}
   return fmtMs(s.duration_ms);
-}
+}}
 
-function renderInspector(){
+function renderInspector(){{
   const t = TRACES[sel.traj];
   const s = t.spans[sel.span];
   const col = el(`<div class="col inspector"></div>`);
-  col.appendChild(el(`<div class="hd">inspector &middot; selected span</div>`));
+  col.appendChild(el(`<div class="hd">inspector · selected span</div>`));
   const ins = el(`<div class="ins"></div>`);
-  ins.appendChild(el(`<h3>${s.name}</h3>`));
-  ins.appendChild(el(`<div class="sub">${s.kind} &middot; ${fmtMs(s.duration_ms)} @ ${fmtMs(s.start_ms)}</div>`));
+  ins.appendChild(el(`<h3>${{s.name}}</h3>`));
+  ins.appendChild(el(`<div class="sub">${{s.kind}} · ${{fmtMs(s.duration_ms)}} @ ${{fmtMs(s.start_ms)}}</div>`));
   const entries = Object.entries(s.attributes);
   entries.push(["span_id", s.span_id]);
   entries.push(["trace_id", t.trace_id]);
   entries.push(["status", s.status]);
-  for(const [k,v] of entries){
+  for(const [k,v] of entries){{
     const isErr = (k==="status" && v==="error") || k==="chorus.failure.class" ||
                   (typeof v==="string" && /error|exit 1|fail/i.test(v));
     const val = Array.isArray(v)?v.join(", "):String(v);
-    const kv = el(`<div class="kv"><div class="k">${k}</div><div class="v${isErr?" err":""}"></div></div>`);
+    const kv = el(`<div class="kv"><div class="k">${{k}}</div><div class="v${{isErr?" err":""}}"></div></div>`);
     kv.querySelector(".v").textContent = val;
     ins.appendChild(kv);
-  }
+  }}
+  const actions = el(`<div class="ins-actions"><button type="button" class="ins-open">expand in modal</button></div>`);
+  actions.querySelector("button").onclick = openSpanModal;
+  ins.appendChild(actions);
   col.appendChild(ins);
   return col;
-}
+}}
 
 render();
-</script>
-</body>
-</html>
 """
+    return head + body + document_close(extra_script=script)
