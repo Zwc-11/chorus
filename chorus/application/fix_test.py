@@ -14,6 +14,7 @@ from chorus.adapters.tools.contract_proxy import ContractToolProxy
 from chorus.application.contract_compiler import compile_fix_test_contract
 from chorus.application.event_log import JsonlRunEventLog
 from chorus.application.proof_builder import write_proof_package
+from chorus.application.tournament import RankDecision, TournamentJudge, rank_attempts
 from chorus.application.verifier import verify_contract
 from chorus.application.workflow_runtime import (
     OperatorRegistry,
@@ -73,6 +74,8 @@ class FixTestWorkflowConfig:
     provider: str
     model: str
     test_command: str
+    judge_provider: str = ""
+    judge_model: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +98,7 @@ class FixTestRuntimeState:
     verification: VerificationResult | None = None
     diff: str = ""
     summary: str = ""
+    rank_decision: RankDecision | None = None
 
 
 def run_fix_test(
@@ -108,6 +112,8 @@ def run_fix_test(
     model: str = "",
     attempts: int = 1,
     max_repairs: int = 0,
+    judge_provider: str = "",
+    judge_model: str = "",
 ) -> ProofPackage:
     if attempts < 1:
         raise RuntimeError("attempts must be at least 1")
@@ -134,6 +140,8 @@ def run_fix_test(
         agent_name=agent_name,
         provider=provider,
         model=model,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
     )
     workflow_issues = workflow.validate()
     if workflow_issues:
@@ -158,6 +166,7 @@ def run_fix_test(
     result = _fix_test_result_from_state(runtime_state)
     budget = runtime_result.proof["budget"]
 
+    decision = runtime_state.rank_decision
     proof = ProofPackage(
         run_id=run_id,
         verdict="pass" if result.verification.passed else "fail",
@@ -169,6 +178,8 @@ def run_fix_test(
         cost_usd=float(budget.get("cost_usd", 0.0)),
         summary=result.summary,
         attempts=tuple(attempt.to_dict() for attempt in result.attempts),
+        winner_id=result.winner.attempt_id if result.winner is not None else "",
+        rank=decision.to_dict() if decision is not None else {},
     )
     if result.winner is not None:
         _write_winner_evidence(result.winner, run_dir / "winner")
@@ -261,23 +272,25 @@ def _fix_test_operator_registry(state: FixTestRuntimeState) -> OperatorRegistry:
             output=f"max repairs {state.config.max_repairs}",
         )
 
-    def rank(node: WorkflowNode, _context: WorkflowContext) -> WorkflowNodeResult:
+    def rank(node: WorkflowNode, context: WorkflowContext) -> WorkflowNodeResult:
         if not state.attempts:
             return _runtime_node_result(
                 node,
                 {"winner": None, "reason": "failure_not_reproduced"},
                 output="no attempts",
             )
-        state.winner = _select_winner(state.attempts)
+        winner, decision = _tournament_rank(
+            state.attempts,
+            config=state.config,
+            budget=context.budget,
+            events=context.events,
+        )
+        state.winner = winner
+        state.rank_decision = decision
         return _runtime_node_result(
             node,
-            {
-                "winner": state.winner.attempt_id,
-                "ranking": [
-                    attempt.attempt_id for attempt in sorted(state.attempts, key=_attempt_rank_key)
-                ],
-            },
-            output=state.winner.attempt_id,
+            decision.to_dict(),
+            output=f"{decision.winner_id} ({decision.method})",
         )
 
     def verify(node: WorkflowNode, context: WorkflowContext) -> WorkflowNodeResult:
@@ -452,8 +465,10 @@ def execute_fix_test_workflow(
     _finish_node(events, nodes["repair"], {"max_iterations": config.max_repairs})
 
     _start_node(events, nodes["rank"])
-    winner = _select_winner(attempt_results)
-    _finish_node(events, nodes["rank"], {"winner": winner.attempt_id})
+    winner, decision = _tournament_rank(
+        attempt_results, config=config, budget=budget, events=events
+    )
+    _finish_node(events, nodes["rank"], decision.to_dict())
 
     _start_node(events, nodes["verify"])
     _finish_node(events, nodes["verify"], {"verification": winner.verification.to_dict()})
@@ -555,6 +570,8 @@ def compile_fix_test_workflow(
     agent_name: str,
     provider: str,
     model: str,
+    judge_provider: str = "",
+    judge_model: str = "",
 ) -> WorkflowPlan:
     return WorkflowPlan(
         version=1,
@@ -610,10 +627,15 @@ def compile_fix_test_workflow(
                     "order": [
                         "verification.passed desc",
                         "len(verification.failures) asc",
-                        "len(verification.changed_files) asc",
                         "verification.diff_lines asc",
-                        "target_latency_ms asc",
+                        "len(verification.changed_files) asc",
                     ],
+                    "tie_break": "llm_judge" if judge_provider else "stable_order",
+                    **(
+                        {"judge_provider": judge_provider, "judge_model": judge_model}
+                        if judge_provider
+                        else {}
+                    ),
                 },
             ),
             WorkflowNode(
@@ -669,6 +691,8 @@ def validate_fix_test_workflow(
         provider=str(nodes["generate"].params.get("provider", "")),
         model=str(nodes["generate"].params.get("model", "")),
         test_command=test_command,
+        judge_provider=str(nodes["rank"].params.get("judge_provider", "")),
+        judge_model=str(nodes["rank"].params.get("judge_model", "")),
     )
 
 
@@ -679,6 +703,8 @@ def run_contract(
     agent_name: str = "scripted",
     provider: str = "",
     model: str = "",
+    judge_provider: str = "",
+    judge_model: str = "",
 ) -> ProofPackage:
     return run_fix_test(
         command=contract.task.command,
@@ -688,6 +714,8 @@ def run_contract(
         agent_name=agent_name,
         provider=provider,
         model=model,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
     )
 
 
@@ -702,6 +730,32 @@ def proof_summary(proof: ProofPackage) -> str:
         },
         indent=2,
     )
+
+
+def proof_console_summary(proof: ProofPackage, run_dir: Path) -> str:
+    """The block a developer reads in the terminal when a run finishes."""
+
+    passed = sum(1 for attempt in proof.attempts if attempt.get("passed"))
+    failed = len(proof.attempts) - passed
+    method = str(proof.rank.get("method", "")) if proof.rank else ""
+    reason = str(proof.rank.get("rationale", "")) if proof.rank else ""
+
+    lines = [f"Verdict:  {proof.verdict.upper()}"]
+    winner = proof.winner_id or "none"
+    lines.append(f"Winner:   {winner}" + (f"  (selected by {method})" if method else ""))
+    if reason:
+        lines.append(f"Reason:   {reason}")
+    lines.append(f"Attempts: {len(proof.attempts)}  ({passed} passed / {failed} failed)")
+    lines.append(
+        f"Cost:     ${proof.cost_usd:.4f}  ·  "
+        f"{proof.model_calls} model calls  ·  {proof.tool_calls} tool calls"
+    )
+    lines.append("")
+    lines.append(f"Proof:    {run_dir / 'proof.md'}")
+    lines.append(f"Patch:    {run_dir / 'winner.patch'}")
+    lines.append(f"Fan:      {run_dir / 'fan.html'}")
+    lines.append(f"Report:   {run_dir / 'report.html'}")
+    return "\n".join(lines)
 
 
 def _workflow_nodes(workflow: WorkflowPlan) -> dict[str, WorkflowNode]:
@@ -750,24 +804,28 @@ def _run_policy_test(proxy: ContractToolProxy, command: str) -> ExecResult:
     )
 
 
-def _select_winner(attempts: list[AttemptResult]) -> AttemptResult:
-    if not attempts:
-        raise RuntimeError("no attempts were run")
-    passing = [attempt for attempt in attempts if attempt.verification.passed]
-    pool = passing or attempts
-    return sorted(pool, key=_attempt_rank_key)[0]
+def _tournament_rank(
+    attempts: list[AttemptResult],
+    *,
+    config: FixTestWorkflowConfig,
+    budget: BudgetState,
+    events: JsonlRunEventLog,
+) -> tuple[AttemptResult, RankDecision]:
+    """Objective-first tournament; an LLM judge breaks exact ties when configured."""
 
+    judge: TournamentJudge | None = None
+    if config.judge_provider:
+        from chorus.adapters.agents.murmur_patch import port_for_provider
 
-def _attempt_rank_key(attempt: AttemptResult) -> tuple[bool, int, int, int, float, str]:
-    verification = attempt.verification
-    return (
-        not verification.passed,
-        len(verification.failures),
-        len(verification.changed_files),
-        verification.diff_lines,
-        attempt.target_latency_ms,
-        attempt.attempt_id,
-    )
+        port, model_id = port_for_provider(config.judge_provider, config.judge_model)
+        judge = TournamentJudge(model_port=port, model=model_id)
+    decision = rank_attempts(list(attempts), judge=judge)
+    if decision.method == "llm_judge" or decision.judge_model:
+        budget.model_calls += 1
+        budget.cost_usd += decision.judge_cost_usd
+    events.emit("rank_decided", decision.to_dict())
+    by_id = {attempt.attempt_id: attempt for attempt in attempts}
+    return by_id[decision.winner_id], decision
 
 
 def _winner_summary(winner: AttemptResult, attempts: list[AttemptResult]) -> str:

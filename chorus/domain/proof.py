@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from chorus.domain.contract import Contract
@@ -21,6 +21,10 @@ class ProofPackage:
     cost_usd: float
     summary: str = ""
     attempts: tuple[dict[str, Any], ...] = ()
+    winner_id: str = ""
+    # The tournament's RankDecision as a plain dict: winner, ranking, method,
+    # tie info, and rationale. Empty when the run had nothing to rank.
+    rank: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

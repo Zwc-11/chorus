@@ -125,7 +125,12 @@ def build_contract_agent(
         return ScriptedFixAgent()
     if agent in {"chorus-lite", "lite"}:
         return ChorusLiteAgent(provider=provider, model_id=model, seed_offset=seed)
-    raise KeyError("unknown contract agent; use 'scripted' or 'chorus-lite'")
+    if agent in {"murmur", "murmur-lite"}:
+        from chorus.adapters.agents.murmur_patch import MurmurPatchAgent, port_for_provider
+
+        port, model_id = port_for_provider(provider, model)
+        return MurmurPatchAgent(model_port=port, model=model_id)
+    raise KeyError("unknown contract agent; use 'scripted', 'chorus-lite', or 'murmur'")
 
 
 def _scripted_patch_text(text: str) -> str:

@@ -60,7 +60,7 @@ def hud_shell_start(*, brand: str, run_line: str, quote: str = "") -> str:
     )
 
 
-def hud_shell_end(*, footer_left: str = "chorus") -> str:
+def hud_shell_end(*, footer_left: str = "murmur") -> str:
     return (
         "</main>"
         '<footer class="hud-footer">'

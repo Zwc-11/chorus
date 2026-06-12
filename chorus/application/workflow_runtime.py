@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field, replace
@@ -16,6 +17,7 @@ from chorus.adapters.tools.contract_proxy import ContractToolProxy
 from chorus.application.contract_compiler import compile_fix_test_contract
 from chorus.application.event_log import JsonlRunEventLog
 from chorus.application.verifier import verify_contract
+from chorus.core.model_port import ModelPort, ModelResponse
 from chorus.domain.contract import Contract
 from chorus.domain.policy import BudgetState, PolicyEngine
 from chorus.domain.tool import ExecResult
@@ -104,6 +106,8 @@ class WorkflowContext:
     events: JsonlRunEventLog
     results: dict[str, WorkflowNodeResult]
     sandbox: LocalWorktreeSandbox | None = None
+    model_port: ModelPort | None = None
+    default_model: str = ""
 
     def dependency_results(self, node: WorkflowNode) -> list[WorkflowNodeResult]:
         return [
@@ -145,6 +149,8 @@ class WorkflowRuntime:
         registry: OperatorRegistry | None = None,
         concurrency: int = 1,
         resume: bool = False,
+        model_port: ModelPort | None = None,
+        default_model: str = "",
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.out_root = out_root
@@ -152,6 +158,8 @@ class WorkflowRuntime:
         self.registry = registry or default_operator_registry()
         self.concurrency = max(1, concurrency)
         self.resume = resume
+        self.model_port = model_port
+        self.default_model = default_model
 
     def run(self, workflow: WorkflowPlan, *, run_id: str | None = None) -> WorkflowRunResult:
         issues = workflow.validate()
@@ -177,6 +185,8 @@ class WorkflowRuntime:
             budget=budget,
             events=events,
             results={},
+            model_port=self.model_port,
+            default_model=self.default_model,
         )
         events.emit(
             "workflow_started",
@@ -355,17 +365,159 @@ def _generate(node: WorkflowNode, context: WorkflowContext) -> WorkflowNodeResul
 
 
 def _map(node: WorkflowNode, context: WorkflowContext) -> WorkflowNodeResult:
+    """Fan out N independent subagent attempts.
+
+    With a configured :class:`ModelPort`, each attempt is an isolated model call:
+    its own message context, its own attempt directory, its own artifacts. With
+    no model port (dry runs, CI, budget estimation) it falls back to
+    deterministic placeholder candidates so workflows stay runnable offline.
+    """
+
     count = max(1, int(node.params.get("n", node.params.get("count", 1))))
     prompt = str(node.params.get("prompt") or context.workflow.goal)
-    items = [f"candidate_{index + 1}: {prompt}" for index in range(count)]
-    artifact = _write_artifact(context, node, "candidates.json", json.dumps(items, indent=2))
+    if context.model_port is None:
+        items = [f"candidate_{index + 1}: {prompt}" for index in range(count)]
+        artifact = _write_artifact(context, node, "candidates.json", json.dumps(items, indent=2))
+        return _node_result(
+            node,
+            {"items": items, "artifact": artifact},
+            output=f"{count} candidates",
+            artifacts=(artifact,),
+            taint="untrusted_model_output",
+        )
+    return _map_with_model(node, context, count=count, prompt=prompt)
+
+
+def _map_with_model(
+    node: WorkflowNode, context: WorkflowContext, *, count: int, prompt: str
+) -> WorkflowNodeResult:
+    port = context.model_port
+    assert port is not None  # guarded by _map
+    model = node.model or str(node.params.get("model", "")) or context.default_model
+    if not model:
+        raise RuntimeError(
+            f"map node {node.id}: no model id; set node.model or pass default_model"
+        )
+    _check_map_budget(node, context, count=count)
+
+    temperature = node.temperature if node.temperature is not None else 0.7
+    max_tokens = int(node.params.get("max_tokens", 2048))
+    message_lists = [
+        _map_messages(node, context, prompt=prompt, index=index, count=count)
+        for index in range(count)
+    ]
+
+    async def _fan_out() -> list[ModelResponse | BaseException]:
+        calls = (
+            port.complete(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            for messages in message_lists
+        )
+        return await asyncio.gather(*calls, return_exceptions=True)
+
+    responses = asyncio.run(_fan_out())
+
+    items: list[dict[str, Any]] = []
+    artifacts: list[str] = []
+    for index, (messages, response) in enumerate(zip(message_lists, responses, strict=True)):
+        attempt_id = f"attempt_{index + 1:02d}"
+        attempt_dir = context.node_dir(node) / "attempts" / attempt_id
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "messages.json").write_text(
+            json.dumps(messages, indent=2), encoding="utf-8"
+        )
+        context.budget.model_calls += 1
+        if isinstance(response, BaseException):
+            item: dict[str, Any] = {
+                "attempt": index + 1,
+                "status": "error",
+                "error": str(response),
+            }
+        else:
+            context.budget.cost_usd += response.cost_usd
+            response_path = attempt_dir / "response.txt"
+            response_path.write_text(response.text, encoding="utf-8")
+            artifacts.append(response_path.relative_to(context.run_dir).as_posix())
+            item = {
+                "attempt": index + 1,
+                "status": "ok",
+                "text": response.text,
+                "model": response.model,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "cost_usd": response.cost_usd,
+                "latency_ms": response.latency_ms,
+                "artifact": artifacts[-1],
+            }
+        (attempt_dir / "result.json").write_text(json.dumps(item, indent=2), encoding="utf-8")
+        context.events.emit("workflow_map_attempt", {"node_id": node.id, **item})
+        items.append(item)
+
+    succeeded = sum(1 for item in items if item["status"] == "ok")
+    candidates = _write_artifact(context, node, "candidates.json", json.dumps(items, indent=2))
+    summary = {
+        "items": items,
+        "artifact": candidates,
+        "succeeded": succeeded,
+        "failed": count - succeeded,
+    }
     return _node_result(
         node,
-        {"items": items, "artifact": artifact},
-        output=f"{count} candidates",
-        artifacts=(artifact,),
+        summary,
+        output=f"{succeeded}/{count} attempts succeeded",
+        artifacts=(candidates, *artifacts),
+        passed=succeeded >= 1,
         taint="untrusted_model_output",
+        quarantined=succeeded == 0,
     )
+
+
+def _check_map_budget(node: WorkflowNode, context: WorkflowContext, *, count: int) -> None:
+    limits = {**context.workflow.budgets, **context.workflow.budget, **node.budget}
+    max_calls = limits.get("max_model_calls")
+    if max_calls is not None and context.budget.model_calls + count > float(max_calls):
+        raise RuntimeError(
+            f"map node {node.id}: fan-out of {count} would exceed "
+            f"max_model_calls={max_calls} (used {context.budget.model_calls})"
+        )
+    max_cost = limits.get("max_cost_usd")
+    if max_cost is not None and context.budget.cost_usd >= float(max_cost):
+        raise RuntimeError(
+            f"map node {node.id}: budget exhausted before fan-out "
+            f"(cost ${context.budget.cost_usd:.4f} >= max_cost_usd={max_cost})"
+        )
+
+
+def _map_messages(
+    node: WorkflowNode,
+    context: WorkflowContext,
+    *,
+    prompt: str,
+    index: int,
+    count: int,
+) -> list[dict[str, str]]:
+    """Build one attempt's isolated message context (no state shared across attempts)."""
+
+    role = node.role or "Propose one complete candidate solution for the task."
+    system = (
+        f"{role} You are attempt {index + 1} of {count} independent attempts; "
+        "work alone and do not assume other attempts exist."
+    )
+    sections = [prompt]
+    for dependency in context.dependency_results(node):
+        if dependency.output:
+            sections.append(
+                f"## Context from `{dependency.node_id}` ({dependency.op})\n"
+                f"{dependency.output[:4000]}"
+            )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n\n".join(sections)},
+    ]
 
 
 def _exec(node: WorkflowNode, context: WorkflowContext) -> WorkflowNodeResult:
@@ -616,4 +768,4 @@ def _proof_payload(
 
 
 def _elapsed(start: float) -> float:
-    return (perf_counter() - start) * 1000
+    return (perf_counter() - start) * 1000.0

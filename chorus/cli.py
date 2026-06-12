@@ -1,4 +1,4 @@
-"""Command-line interface for Chorus.
+"""Command-line interface for Murmur (internal package name: chorus).
 
 This file turns the Phase 0 harness into commands a user can run: record a
 dummy run, replay it, and intentionally mutate it to prove divergence detection.
@@ -23,7 +23,7 @@ from chorus.adapters.storage.baseline import BaselineStore
 from chorus.adapters.storage.jsonl import JsonlEventStore
 from chorus.application.contract_compiler import compile_fix_test_contract
 from chorus.application.fix_test import (
-    proof_summary,
+    proof_console_summary,
     run_contract,
     run_fix_test,
     validate_fix_test_workflow,
@@ -53,7 +53,7 @@ from chorus.trace.mapper import events_to_traces
 
 app = typer.Typer(no_args_is_help=True)
 agents_app = typer.Typer(help="List and exercise registered agent modules.")
-contract_app = typer.Typer(help="Create and validate Chorus engineering contracts.")
+contract_app = typer.Typer(help="Create and validate Murmur engineering contracts.")
 workflow_app = typer.Typer(help="Create and validate Murmur workflow plans.")
 app.add_typer(agents_app, name="agents")
 app.add_typer(contract_app, name="contract")
@@ -62,7 +62,7 @@ app.add_typer(workflow_app, name="workflow")
 
 @app.callback()
 def _main() -> None:
-    """Chorus — contract and proof layer for AI-generated code changes."""
+    """Murmur — reliability harness for cheap coding agents: fan-out, verify, prove."""
 
     loaded = load_project_env()
     if loaded is not None:
@@ -83,7 +83,7 @@ def init_project(
     root: Annotated[Path, typer.Option(help="Project root to initialize.")] = Path("."),
     force: Annotated[bool, typer.Option(help="Overwrite existing starter files.")] = False,
 ) -> None:
-    """Create a minimal Chorus starter setup for an agent repository."""
+    """Create a minimal Murmur starter setup for an agent repository."""
 
     targets = {
         root / "tasks" / "chorus-smoke.yaml": _starter_task(),
@@ -104,11 +104,11 @@ def init_project(
         typer.echo(f"created {path}")
     for path in skipped:
         typer.echo(f"exists  {path}  (use --force to overwrite)")
-    typer.echo("\nNext: run `chorus run --n 5` or wire your agent through AgentPort.")
+    typer.echo("\nNext: run `murmur run --n 5` or wire your agent through AgentPort.")
 
 
 def _starter_task() -> str:
-    return """# Minimal Chorus task. Replace this with a repo-specific agent task.
+    return """# Minimal Murmur task. Replace this with a repo-specific agent task.
 task_id: chorus.smoke
 expected_output: HELLO CHORUS
 metadata:
@@ -119,14 +119,14 @@ prompt: |
 
 
 def _starter_workflow() -> str:
-    return """name: Chorus reliability gate
+    return """name: Murmur reliability gate
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  chorus:
+  murmur:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,22 +134,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
-      - run: chorus gate --suite synthetic --n 20 --k 5
+      - run: murmur gate --suite synthetic --n 20 --k 5
 """
 
 
 def _starter_notes() -> str:
-    return """# Chorus local notes
+    return """# Murmur local notes
 
 This directory is for event logs, fan reports, traces, and baseline files.
 
 Useful commands:
 
-- `chorus agents list`
-- `chorus run --n 30`
-- `chorus trace --n 12 --replay`
-- `chorus gate --suite synthetic --n 20 --k 5`
-- `chorus fix-test --cmd "python -m pytest tests/test_example.py -q"`
+- `murmur agents list`
+- `murmur run --n 30`
+- `murmur trace --n 12 --replay`
+- `murmur gate --suite synthetic --n 20 --k 5`
+- `murmur fix-test --cmd "python -m pytest tests/test_example.py -q"`
 """
 
 
@@ -197,7 +197,7 @@ def _write_local_preview_index(root: Path) -> Path:
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Chorus local preview</title>
+<title>Murmur local preview</title>
 <style>
   :root {{
     --bg: #e4e4e0;
@@ -273,9 +273,9 @@ def _write_local_preview_index(root: Path) -> Path:
 </style>
 </head>
 <body>
-  <h1>chorus</h1>
+  <h1>murmur</h1>
   <p>
-    Local HUD preview generated from Chorus reliability runs, traces, and
+    Local HUD preview generated from Murmur reliability runs, traces, and
     benchmark comparisons.
   </p>
   <div class="grid">
@@ -311,7 +311,7 @@ def fix_test(
     cmd: Annotated[str, typer.Option("--cmd", help="Failing test command to reproduce/fix.")],
     budget: Annotated[float, typer.Option(help="Maximum model/tool budget in USD.")] = 0.50,
     agent: Annotated[
-        str, typer.Option(help="Contract agent: scripted | chorus-lite.")
+        str, typer.Option(help="Contract agent: scripted | chorus-lite | murmur.")
     ] = "scripted",
     repo_root: Annotated[Path, typer.Option(help="Repository root to execute in.")] = Path("."),
     out_dir: Annotated[Path, typer.Option(help="Root directory for proof runs.")] = Path(
@@ -323,6 +323,11 @@ def fix_test(
     max_repairs: Annotated[
         int, typer.Option(min=0, help="Maximum repair iterations per failed attempt.")
     ] = 0,
+    judge_provider: Annotated[
+        str,
+        typer.Option(help="LLM judge for rank ties: fake | ollama | openai | deepseek."),
+    ] = "",
+    judge_model: Annotated[str, typer.Option(help="Model id for the tie-break judge.")] = "",
 ) -> None:
     """Run the contract-first failing-test repair workflow."""
 
@@ -337,16 +342,16 @@ def fix_test(
             model=model,
             attempts=n,
             max_repairs=max_repairs,
+            judge_provider=judge_provider,
+            judge_model=judge_model,
         )
     except (KeyError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
 
     run_path = out_dir / proof.run_id
-    typer.echo("# Chorus contract proof")
-    typer.echo(proof_summary(proof))
-    typer.echo(f"\nProof written to {run_path / 'proof.md'}")
-    typer.echo(f"HTML report written to {run_path / 'report.html'}")
+    typer.echo(f"# Murmur proof — {proof.run_id}\n")
+    typer.echo(proof_console_summary(proof, run_path))
     raise typer.Exit(0 if proof.verdict == "pass" else 1)
 
 
@@ -361,7 +366,7 @@ def contract_create(
         ".chorus/contracts/fix-test.yaml"
     ),
 ) -> None:
-    """Compile a failing-test command into a Chorus contract YAML file."""
+    """Compile a failing-test command into a Murmur contract YAML file."""
 
     contract = compile_fix_test_contract(
         command=from_test,
@@ -374,7 +379,7 @@ def contract_create(
 
 @contract_app.command("check")
 def contract_check(path: Annotated[Path, typer.Argument(help="Contract YAML path.")]) -> None:
-    """Validate a Chorus contract YAML file."""
+    """Validate a Murmur contract YAML file."""
 
     contract = Contract.read(path)
     issues = contract.validate()
@@ -443,6 +448,15 @@ def workflow_run(
         str,
         typer.Option(help="Optional stable run id for deterministic resume."),
     ] = "",
+    model_provider: Annotated[
+        str,
+        typer.Option(
+            help="Model provider for map fan-out: none | fake | ollama | openai | deepseek."
+        ),
+    ] = "none",
+    model: Annotated[
+        str, typer.Option(help="Default model id for map nodes (e.g. deepseek-chat).")
+    ] = "",
 ) -> None:
     """Execute a validated Murmur workflow plan."""
 
@@ -459,12 +473,19 @@ def workflow_run(
             for issue in contract_issues:
                 typer.echo(f"error: {issue}", err=True)
             raise typer.Exit(1)
+    try:
+        model_port, default_model = _build_model_port(model_provider, model)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
     runtime = WorkflowRuntime(
         repo_root=repo_root,
         out_root=out_dir,
         contract=contract,
         concurrency=concurrency,
         resume=resume,
+        model_port=model_port,
+        default_model=default_model,
     )
     try:
         result = runtime.run(workflow, run_id=run_id or None)
@@ -483,6 +504,32 @@ def workflow_run(
         )
     )
     raise typer.Exit(0 if result.passed else 1)
+
+
+def _build_model_port(provider: str, model: str):
+    """Map a --model-provider value onto a ModelPort adapter (or None)."""
+
+    from chorus.adapters.models import FakeModel, OllamaModel, OpenAICompatibleModel
+
+    normalized = provider.strip().lower()
+    if normalized in ("", "none"):
+        return None, model
+    if normalized == "fake":
+        return FakeModel(), model or "fake-model"
+    if normalized == "ollama":
+        if not model:
+            raise RuntimeError("--model is required with --model-provider ollama")
+        return OllamaModel(), model
+    if normalized == "openai":
+        return OpenAICompatibleModel(), model or "gpt-4o-mini"
+    if normalized == "deepseek":
+        return (
+            OpenAICompatibleModel(
+                base_url="https://api.deepseek.com", api_key_env="DEEPSEEK_API_KEY"
+            ),
+            model or "deepseek-chat",
+        )
+    raise RuntimeError(f"unknown model provider: {provider}")
 
 
 @app.command("plan")
@@ -529,7 +576,7 @@ def plan_workflow(
 def run_contract_command(
     path: Annotated[Path, typer.Argument(help="Contract YAML path.")],
     agent: Annotated[
-        str, typer.Option(help="Contract agent: scripted | chorus-lite.")
+        str, typer.Option(help="Contract agent: scripted | chorus-lite | murmur.")
     ] = "scripted",
     out_dir: Annotated[Path, typer.Option(help="Root directory for proof runs.")] = Path(
         ".chorus/runs"
@@ -537,7 +584,7 @@ def run_contract_command(
     provider: Annotated[str, typer.Option(help="Provider for chorus-lite.")] = "",
     model: Annotated[str, typer.Option(help="Model id for chorus-lite.")] = "",
 ) -> None:
-    """Execute an existing Chorus contract."""
+    """Execute an existing Murmur contract."""
 
     contract = Contract.read(path)
     issues = contract.validate()
@@ -553,10 +600,8 @@ def run_contract_command(
         model=model,
     )
     run_path = out_dir / proof.run_id
-    typer.echo("# Chorus contract proof")
-    typer.echo(proof_summary(proof))
-    typer.echo(f"\nProof written to {run_path / 'proof.md'}")
-    typer.echo(f"HTML report written to {run_path / 'report.html'}")
+    typer.echo(f"# Murmur proof — {proof.run_id}\n")
+    typer.echo(proof_console_summary(proof, run_path))
     raise typer.Exit(0 if proof.verdict == "pass" else 1)
 
 
@@ -697,7 +742,7 @@ def trace(
     total_tokens = sum(t.total_tokens for t in traces)
     total_cost = sum(t.total_cost_usd for t in traces)
 
-    typer.echo(f"# Chorus trace {result.run_id}")
+    typer.echo(f"# Murmur trace {result.run_id}")
     typer.echo(
         f"- trajectories: {len(traces)}  "
         f"(pass {counts['pass']} / fail {counts['fail']} / error {counts['error']})"
@@ -1024,9 +1069,9 @@ def bench(
     """Deprecated legacy SWE-bench patch-only path; use fix-test / run-contract."""
 
     typer.echo(
-        "`chorus bench` is deprecated as a public proof path. Use "
-        "`chorus fix-test --cmd \"pytest ...\"` for contract-first execution, or "
-        "`chorus run-contract .chorus/contracts/task.yaml` for an existing contract.",
+        "`murmur bench` is deprecated as a public proof path. Use "
+        "`murmur fix-test --cmd \"pytest ...\"` for contract-first execution, or "
+        "`murmur run-contract .chorus/contracts/task.yaml` for an existing contract.",
         err=True,
     )
     raise typer.Exit(2)
@@ -1124,7 +1169,7 @@ def doctor(
     from chorus.benchmarks.swe.types import BenchDependencyMissing
 
     status = provider_status(provider or None)
-    typer.echo("Chorus model provider")
+    typer.echo("Murmur model provider")
     for key, value in status.items():
         typer.echo(f"  {key}: {value}")
     if status.get("provider") == "deepseek":
@@ -1217,7 +1262,7 @@ def agents_list() -> None:
 
 @agents_app.command("run")
 def agents_run(
-    name: Annotated[str, typer.Argument(help="Agent module name (see `chorus agents list`).")],
+    name: Annotated[str, typer.Argument(help="Agent module name (see `murmur agents list`).")],
     n: Annotated[int, typer.Option(min=1, help="Trajectories to fan out.")] = 1,
     seed: Annotated[int, typer.Option(help="Per-lane seed base.")] = 7,
     task: Annotated[str, typer.Option(help="Task: demo | hard (or CHORUS_TASK).")] = "",
@@ -1264,3 +1309,8 @@ def agents_run(
     if html is not None:
         out = write_fan_html(result, html, events=events)
         typer.echo(f"Fan report written to {out}")
+
+
+if __name__ == "__main__":
+    # Lets `python -m chorus.cli` behave like the installed `murmur` command.
+    app()

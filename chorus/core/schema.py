@@ -37,7 +37,10 @@ def _validate(value: Any, schema: dict[str, Any], field: str) -> list[SchemaIssu
     expected_type = schema.get("type")
     if isinstance(expected_type, str):
         py_type = _TYPE_MAP.get(expected_type)
-        if py_type is not None and not isinstance(value, py_type):
+        # bool subclasses int in Python, so without this guard True would pass
+        # as a valid "integer"/"number" — JSON Schema treats them as distinct.
+        wrong_bool = isinstance(value, bool) and expected_type in ("integer", "number")
+        if py_type is not None and (wrong_bool or not isinstance(value, py_type)):
             return [SchemaIssue(field=field, expected=expected_type, got=type(value).__name__)]
 
     if expected_type == "object" or "properties" in schema:
