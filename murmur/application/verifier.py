@@ -57,7 +57,12 @@ def verify_contract(
         failures.append("too_many_files_changed")
 
     diff = sandbox.git_diff()
-    diff_lines = sum(1 for line in diff.splitlines() if line.startswith(("+", "-")))
+    # Count changed lines only — "+++"/"---" file headers are not changes.
+    diff_lines = sum(
+        1
+        for line in diff.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
     if diff_lines > contract.required_proof.max_diff_lines:
         failures.append("diff_too_large")
     if not failure_reproduced:

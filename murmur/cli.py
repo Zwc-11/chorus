@@ -24,7 +24,7 @@ from murmur.adapters.storage.jsonl import JsonlEventStore
 from murmur.adapters.tools.registry import default_tool_metadata
 from murmur.application.contract_compiler import compile_fix_test_contract
 from murmur.application.fix_test import (
-    proof_summary,
+    proof_console_summary,
     run_contract,
     run_fix_test,
     run_fix_test_workflow,
@@ -429,14 +429,14 @@ def fix_test(
     cmd: Annotated[str, typer.Option("--cmd", help="Failing test command to reproduce/fix.")],
     budget: Annotated[float, typer.Option(help="Maximum model/tool budget in USD.")] = 0.50,
     agent: Annotated[
-        str, typer.Option(help="Contract agent: scripted | murmur-lite.")
+        str, typer.Option(help="Contract agent: scripted | murmur-lite | murmur.")
     ] = "scripted",
     repo_root: Annotated[Path, typer.Option(help="Repository root to execute in.")] = Path("."),
     out_dir: Annotated[Path, typer.Option(help="Root directory for proof runs.")] = Path(
         ".murmur/runs"
     ),
-    provider: Annotated[str, typer.Option(help="Provider for murmur-lite.")] = "",
-    model: Annotated[str, typer.Option(help="Model id for murmur-lite.")] = "",
+    provider: Annotated[str, typer.Option(help="Provider for murmur/murmur-lite.")] = "",
+    model: Annotated[str, typer.Option(help="Model id for murmur/murmur-lite.")] = "",
     n: Annotated[int, typer.Option(min=1, help="Number of isolated repair attempts.")] = 1,
     max_repairs: Annotated[
         int, typer.Option(min=0, help="Maximum repair iterations per failed attempt.")
@@ -444,6 +444,11 @@ def fix_test(
     attempt_concurrency: Annotated[
         int, typer.Option(min=1, help="Maximum isolated attempts to run at once.")
     ] = 1,
+    judge_provider: Annotated[
+        str,
+        typer.Option(help="LLM judge for rank ties: fake | ollama | openai | deepseek."),
+    ] = "",
+    judge_model: Annotated[str, typer.Option(help="Model id for the tie-break judge.")] = "",
 ) -> None:
     """Run the contract-first failing-test repair workflow."""
 
@@ -459,16 +464,16 @@ def fix_test(
             attempts=n,
             max_repairs=max_repairs,
             attempt_concurrency=attempt_concurrency,
+            judge_provider=judge_provider,
+            judge_model=judge_model,
         )
     except (KeyError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
 
     run_path = out_dir / proof.run_id
-    typer.echo("# Murmur contract proof")
-    typer.echo(proof_summary(proof))
-    typer.echo(f"\nProof written to {run_path / 'proof.md'}")
-    typer.echo(f"HTML report written to {run_path / 'report.html'}")
+    typer.echo(f"# Murmur proof - {proof.run_id}\n")
+    typer.echo(proof_console_summary(proof, run_path))
     raise typer.Exit(0 if proof.verdict == "pass" else 1)
 
 
@@ -653,9 +658,15 @@ def workflow_run(
     ] = 1,
     provider: Annotated[
         str,
-        typer.Option(help="Provider for model-backed generate/map nodes."),
+        typer.Option(help="Provider for legacy PatchModel-backed generate/map nodes."),
     ] = "",
-    model: Annotated[str, typer.Option(help="Model id for model-backed generate/map nodes.")] = "",
+    model: Annotated[str, typer.Option(help="Model id for model-backed workflow nodes.")] = "",
+    model_provider: Annotated[
+        str,
+        typer.Option(
+            help="ModelPort provider for map fan-out: none | fake | ollama | openai | deepseek."
+        ),
+    ] = "",
     run_id: Annotated[
         str,
         typer.Option(help="Optional stable run id for deterministic resume."),
@@ -708,13 +719,18 @@ def workflow_run(
         )
         raise typer.Exit(0 if proof.verdict == "pass" else 1)
     workflow_model = None
-    if provider or model:
+    if (provider or model) and not model_provider.strip():
         from murmur.benchmarks.swe.providers import create_patch_model, default_model
 
         workflow_model = create_patch_model(
             provider=provider or None,
             model=model or default_model(provider),
         )
+    try:
+        model_port, default_model_id = _build_model_port(model_provider, model)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
     runtime = WorkflowRuntime(
         repo_root=repo_root,
         out_root=out_dir,
@@ -722,6 +738,8 @@ def workflow_run(
         model=workflow_model,
         concurrency=concurrency,
         resume=resume,
+        model_port=model_port,
+        default_model=default_model_id,
     )
     try:
         result = runtime.run(workflow, run_id=run_id or None)
@@ -740,6 +758,32 @@ def workflow_run(
         )
     )
     raise typer.Exit(0 if result.passed else 1)
+
+
+def _build_model_port(provider: str, model: str):
+    """Map a --model-provider value onto a ModelPort adapter, or return none."""
+
+    from murmur.adapters.models import FakeModel, OllamaModel, OpenAICompatibleModel
+
+    normalized = provider.strip().lower()
+    if normalized in {"", "none"}:
+        return None, model
+    if normalized == "fake":
+        return FakeModel(), model or "fake-model"
+    if normalized == "ollama":
+        if not model:
+            raise RuntimeError("--model is required with --model-provider ollama")
+        return OllamaModel(), model
+    if normalized == "openai":
+        return OpenAICompatibleModel(), model or "gpt-4o-mini"
+    if normalized == "deepseek":
+        return (
+            OpenAICompatibleModel(
+                base_url="https://api.deepseek.com", api_key_env="DEEPSEEK_API_KEY"
+            ),
+            model or "deepseek-chat",
+        )
+    raise RuntimeError(f"unknown model provider: {provider}")
 
 
 @app.command("plan")
@@ -847,13 +891,18 @@ def _is_coding_fix_test_workflow(workflow: WorkflowPlan) -> bool:
 def run_contract_command(
     path: Annotated[Path, typer.Argument(help="Contract YAML path.")],
     agent: Annotated[
-        str, typer.Option(help="Contract agent: scripted | murmur-lite.")
+        str, typer.Option(help="Contract agent: scripted | murmur-lite | murmur.")
     ] = "scripted",
     out_dir: Annotated[Path, typer.Option(help="Root directory for proof runs.")] = Path(
         ".murmur/runs"
     ),
-    provider: Annotated[str, typer.Option(help="Provider for murmur-lite.")] = "",
-    model: Annotated[str, typer.Option(help="Model id for murmur-lite.")] = "",
+    provider: Annotated[str, typer.Option(help="Provider for murmur/murmur-lite.")] = "",
+    model: Annotated[str, typer.Option(help="Model id for murmur/murmur-lite.")] = "",
+    judge_provider: Annotated[
+        str,
+        typer.Option(help="LLM judge for rank ties: fake | ollama | openai | deepseek."),
+    ] = "",
+    judge_model: Annotated[str, typer.Option(help="Model id for the tie-break judge.")] = "",
 ) -> None:
     """Execute an existing Murmur contract."""
 
@@ -869,12 +918,12 @@ def run_contract_command(
         agent_name=agent,
         provider=provider,
         model=model,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
     )
     run_path = out_dir / proof.run_id
-    typer.echo("# Murmur contract proof")
-    typer.echo(proof_summary(proof))
-    typer.echo(f"\nProof written to {run_path / 'proof.md'}")
-    typer.echo(f"HTML report written to {run_path / 'report.html'}")
+    typer.echo(f"# Murmur proof - {proof.run_id}\n")
+    typer.echo(proof_console_summary(proof, run_path))
     raise typer.Exit(0 if proof.verdict == "pass" else 1)
 
 

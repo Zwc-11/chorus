@@ -131,7 +131,12 @@ def build_contract_agent(
         return ScriptedFixAgent()
     if agent in {"murmur-lite", "lite"}:
         return MurmurLiteAgent(provider=provider, model_id=model, seed_offset=seed)
-    raise KeyError("unknown contract agent; use 'scripted' or 'murmur-lite'")
+    if agent == "murmur":
+        from murmur.adapters.agents.murmur_patch import MurmurPatchAgent, port_for_provider
+
+        port, model_id = port_for_provider(provider, model)
+        return MurmurPatchAgent(model_port=port, model=model_id)
+    raise KeyError("unknown contract agent; use 'scripted', 'murmur-lite', or 'murmur'")
 
 
 def _complete_with_retries(

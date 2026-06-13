@@ -9,8 +9,8 @@ from pathlib import Path
 def load_project_env(*, start: Path | None = None) -> Path | None:
     """Apply the first ``.env`` found walking up from *start* (default: cwd).
 
-    Existing environment variables are never overwritten.
-  Returns the path loaded, or ``None`` if no file was found.
+    Existing environment variables are never overwritten. Returns the path
+    loaded, or ``None`` if no file was found.
     """
 
     root = (start or Path.cwd()).resolve()

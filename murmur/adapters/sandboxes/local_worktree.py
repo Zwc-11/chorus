@@ -242,9 +242,29 @@ def _elapsed(start: float) -> float:
 
 
 def _copy_tree(source: Path, dest: Path) -> None:
-    def ignore(_dir: str, names: list[str]) -> set[str]:
-        blocked = {".git", ".murmur", ".venv", ".venv-linux", "__pycache__", ".pytest_cache"}
-        return {name for name in names if name in blocked or name.endswith(".pyc")}
+    dest_resolved = dest.resolve()
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        blocked = {
+            ".git",
+            ".murmur",
+            ".chorus",
+            ".venv",
+            ".venv-linux",
+            "__pycache__",
+            ".pytest_cache",
+        }
+        skipped = {name for name in names if name in blocked or name.endswith(".pyc")}
+        # Never copy the destination into itself. When the run directory lives
+        # inside the repo (e.g. --out-dir ./runs), recursing into it would nest
+        # worktrees inside worktrees until path names overflow.
+        for name in names:
+            if name in skipped:
+                continue
+            candidate = Path(directory, name).resolve()
+            if candidate == dest_resolved or candidate in dest_resolved.parents:
+                skipped.add(name)
+        return skipped
 
     shutil.copytree(source, dest, ignore=ignore)
 

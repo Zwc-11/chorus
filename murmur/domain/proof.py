@@ -26,6 +26,10 @@ class ProofPackage:
     trust_score: TrustScore | None = None
     risk_flags: tuple[str, ...] = ()
     artifact_index: tuple[dict[str, str], ...] = ()
+    winner_id: str = ""
+    # The tournament's RankDecision as a plain dict: winner, ranking, method,
+    # tie info, and rationale. Empty when the run had nothing to rank.
+    rank: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

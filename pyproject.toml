@@ -1,13 +1,14 @@
 # Project metadata and tool configuration.
 # This is the file Python packaging tools read to install Murmur and its dev tools.
+# The Python package is `murmur`; `chorus` remains as a CLI alias for old scripts.
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "murmur-harness"
+name = "murmur-ai-harness"
 version = "0.1.0"
-description = "Reliability and cost harness for coding agents."
+description = "Open-source reliability harness for cheap coding agents — fan-out many isolated attempts, verify with tests and adversarial checks, ship only the proven patch with a full proof package."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -51,6 +52,8 @@ agents = [
 
 [project.scripts]
 murmur = "murmur.cli:app"
+# Legacy alias kept for existing scripts and CI configs.
+chorus = "murmur.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["murmur"]
