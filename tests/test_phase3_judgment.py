@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.core.events import EventRecorder, EventType
-from chorus.core.judge import (
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.core.events import EventRecorder, EventType
+from murmur.core.judge import (
     JudgeCallCache,
     JudgePolicy,
     LabelledJudgeCase,
@@ -15,9 +15,9 @@ from chorus.core.judge import (
     judge_run,
     measure_judge_cost,
 )
-from chorus.core.metrics import reliability_metrics
-from chorus.core.types import RunResult, TaskSpec, TrajectoryResult
-from chorus.gateway.tool_gateway import ToolGateway
+from murmur.core.metrics import reliability_metrics
+from murmur.core.types import RunResult, TaskSpec, TrajectoryResult
+from murmur.gateway.tool_gateway import ToolGateway
 
 TASK = TaskSpec(
     task_id="demo.echo_uppercase",

@@ -6,7 +6,7 @@
 > loop closed on Chorus itself (dogfooding).
 
 ```
-chorus run/trace ──emit gen_ai.* spans──▶ LangSmith project
+murmur run/trace ──emit gen_ai.* spans──▶ LangSmith project
         ▲                                        │
         │ fix the bug                            │ pull the trace
         │                                        ▼
@@ -24,7 +24,7 @@ trace or a finding.
 ```bash
 pip install -e ".[otel]"           # the OpenTelemetry exporter
 export LANGSMITH_API_KEY=ls-...    # from smith.langchain.com → Settings → API Keys
-export LANGSMITH_PROJECT=chorus    # any project name; created on first export
+export LANGSMITH_PROJECT=murmur    # any project name; created on first export
 ```
 
 The MCP server runs via `uvx` (from [uv](https://github.com/astral-sh/uv)); no
@@ -32,10 +32,10 @@ separate install — `uvx langsmith-mcp-server` fetches it on first use.
 
 ---
 
-## 1. Emit a Chorus run to LangSmith
+## 1. Emit a murmur run to LangSmith
 
 ```bash
-chorus trace --n 12 --seed 7 --otlp --backend langsmith --project chorus
+murmur trace --n 12 --seed 7 --otlp --backend langsmith --project murmur
 ```
 
 This records a run, projects its events into `gen_ai.*` spans (model / tool / step
@@ -74,7 +74,7 @@ environment via `${LANGSMITH_API_KEY}` — no secret is committed.
 
 Drive the loop from inside the coding agent, for example:
 
-> "Use the LangSmith MCP server to fetch the most recent run in project `chorus`.
+> "Use the LangSmith MCP server to fetch the most recent run in project `murmur`.
 > Walk the `agent.run → step → model/tool` spans, find the step where `chorus.replay`
 > diverges or `chorus.failure.class` is set, and trace it back to the Chorus source
 > that produced that span."
@@ -85,7 +85,7 @@ LangSmith each run carries `metadata.chorus.run.id`, `metadata.chorus.trajectory
 `metadata.chorus.failure.step` — and **failed/errored trajectories are marked as
 error runs** (via an OTel exception event). So the agent can filter the project to
 error runs, read the failure class and step from metadata, and map a LangSmith span
-straight to the event in `.chorus/trace.jsonl` and the code path that emitted it —
+straight to the event in `.murmur/trace.jsonl` and the code path that emitted it —
 then propose the fix. (Verified live: a 20-trajectory export landed 11 error runs,
 each tagged e.g. `chorus.failure.class=contract_violation`, `failure.step=5`.)
 
@@ -100,8 +100,8 @@ own trace* — is the dogfood demo.
 ## What is Tier A vs Tier B here
 
 - **Tier A (in the repo, tested):** the OTLP→LangSmith exporter
-  ([chorus/adapters/trace/otlp.py](../chorus/adapters/trace/otlp.py)), the
-  `chorus trace --otlp --backend langsmith --project` ergonomics, the `.mcp.json`,
+  ([murmur/adapters/trace/otlp.py](../murmur/adapters/trace/otlp.py)), the
+  `murmur trace --otlp --backend langsmith --project` ergonomics, the `.mcp.json`,
   and this runbook. The export pipeline is verified backend-agnostically with an
   in-memory port in [tests/test_phase6_langsmith.py](../tests/test_phase6_langsmith.py).
 - **Tier B (you run it):** the live export to a real LangSmith project and the actual

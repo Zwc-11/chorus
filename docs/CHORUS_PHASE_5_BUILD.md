@@ -48,7 +48,7 @@ and get disabled, which is the exact failure this project exists to prevent.
   same seed policy. Compare the *paired delta*, not two independent rates.
 - **Three outcomes, not two:** `regressed` / `improved` / `inconclusive`. The third is what
   makes the gate trustworthy — it's honest when N is too small to tell.
-- **Action wraps the CLI.** A thin composite action calling `chorus run`; no logic in YAML.
+- **Action wraps the CLI.** A thin composite action calling `murmur run`; no logic in YAML.
   Integrate, don't reinvent.
 - **Benchmark uses a fixed subset for iteration**, one full run for the headline number.
 - **The number is real or absent.** No placeholders, no synthetic-validated figure dressed
@@ -64,7 +64,7 @@ and get disabled, which is the exact failure this project exists to prevent.
    `regressed | improved | inconclusive` + the delta CI.
 3. **Reporter → PR comment** — Markdown: headline verdict, `pass^k` curve delta, cost delta,
    and the **per-failure-class breakdown** (Phase 4).
-4. **GitHub Action** — composite action: checkout → `chorus run` → compare → comment → exit
+4. **GitHub Action** — composite action: checkout → `murmur run` → compare → comment → exit
    code. Inputs: `n`, `seed-policy`, `task-set`, `baseline-ref`.
 5. **Benchmark adapter(s)** — SWE-bench Verified subset and/or Terminal-Bench task loader
    behind the existing `AgentPort`/task interfaces.
@@ -194,7 +194,7 @@ Goal: a pass^k delta attributable to the HARNESS, not the model.
 
 - [ ] Baseline store: persist + load per `(branch, suite, N)`.
 - [ ] Paired-delta regression test with `regressed/improved/inconclusive`; seeded, deterministic.
-- [ ] GitHub Action wraps `chorus run`, comments, sets exit code; demoed on a real PR.
+- [ ] GitHub Action wraps `murmur run`, comments, sets exit code; demoed on a real PR.
 - [ ] PR comment breaks regressions down by Phase 4 failure class.
 - [ ] **Phase 4 loop-detector fix landed + confusion matrix re-verified** (dependency gate).
 - [ ] Benchmark adapter loads SWE-bench Verified subset / Terminal-Bench.

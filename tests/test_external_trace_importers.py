@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from chorus.adapters.trace.importers import (
+from murmur.adapters.trace.importers import (
     ClaudeCodeTranscriptImporter,
     LangGraphTraceImporter,
     OpenAIAgentsTraceImporter,
 )
-from chorus.core.events import EventType
-from chorus.trace.mapper import events_to_traces
+from murmur.core.events import EventType
+from murmur.trace.mapper import events_to_traces
 
 
 def test_openai_agents_trace_imports_model_and_tool_events() -> None:

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.core.classify import FailurePolicy, classify_trajectory, validate_classifier
-from chorus.core.conductor import RunConductor
-from chorus.core.events import Event, EventType
-from chorus.core.ports import ToolGatewayPort
-from chorus.core.types import StepBoundaryContract, TaskSpec
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.core.classify import FailurePolicy, classify_trajectory, validate_classifier
+from murmur.core.conductor import RunConductor
+from murmur.core.events import Event, EventType
+from murmur.core.ports import ToolGatewayPort
+from murmur.core.types import StepBoundaryContract, TaskSpec
 
 TASK = TaskSpec(
     task_id="demo.echo_uppercase",
@@ -86,7 +86,7 @@ class BadWebsiteAgent:
 
 
 def test_final_contract_check_carries_structured_diagnostics() -> None:
-    from chorus.core.agent_tasks import hard_website_task
+    from murmur.core.agent_tasks import hard_website_task
 
     store = InMemoryEventStore()
     conductor = RunConductor(agent=BadWebsiteAgent(), storage=store, tools={})

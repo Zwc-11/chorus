@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from chorus.adapters.models.fake import FakeModel
-from chorus.application.workflow_runtime import WorkflowRuntime
-from chorus.core.model_port import ModelResponse
-from chorus.domain.workflow import WorkflowNode, WorkflowPlan
+from murmur.adapters.models.fake import FakeModel
+from murmur.application.workflow_runtime import WorkflowRuntime
+from murmur.core.model_port import ModelResponse
+from murmur.domain.workflow import WorkflowNode, WorkflowPlan
 
 
 def _map_plan(n: int = 3, *, budget: dict[str, Any] | None = None) -> WorkflowPlan:

@@ -13,10 +13,10 @@ You are done with Phase 1 when **all** of these hold:
 1. Running one task emits an OpenTelemetry trace whose spans use the `gen_ai.*`
    semantic conventions, ingestible by Phoenix (default) and LangSmith (adapter).
 2. You can open that trace in Phoenix and step `model → tool → model` for one trajectory.
-3. The Chorus trace view renders the same trajectory as a span waterfall with a working
+3. The murmur trace view renders the same trajectory as a span waterfall with a working
    inspector (the three-region UI specced below).
 4. A **replayed** run produces spans visibly marked as replayed (not live).
-5. **Dogfood:** Chorus's tracer is pointed at a Chorus run, and you can read your own spans.
+5. **Dogfood:** Chorus's tracer is pointed at a murmur run, and you can read your own spans.
 6. Tests cover the event→span mapping and the replay-marking.
 
 If any of these is shaky, do not start Phase 2.
@@ -109,7 +109,7 @@ replay-marking, and that content stays absent when the capture flag is off.
 
 **States you must build (not just the happy path):**
 - Loading → skeleton rows, not a spinner.
-- Empty → "no runs yet — `chorus run …`".
+- Empty → "no runs yet — `murmur run …`".
 - Error span → the failed/outlined treatment (the selected state in the mockup).
 - Replayed span → a small replay glyph; replayed trace is visually distinct from live.
 

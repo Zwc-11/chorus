@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import asyncio
 
-from chorus.adapters.storage.baseline import BaselineStore
-from chorus.benchmarks.loader import load_suite
-from chorus.benchmarks.scaffold import BASELINE_SCAFFOLD, Scaffold, run_suite
-from chorus.core.regression import (
+from murmur.adapters.storage.baseline import BaselineStore
+from murmur.benchmarks.loader import load_suite
+from murmur.benchmarks.scaffold import BASELINE_SCAFFOLD, Scaffold, run_suite
+from murmur.core.regression import (
     baseline_set_report,
     bootstrap_delta_ci,
     regression_verdict,
 )
-from chorus.core.suite import SuiteResult, TaskReliability
-from chorus.report.regression_md import render_regression_comment
+from murmur.core.suite import SuiteResult, TaskReliability
+from murmur.report.regression_md import render_regression_comment
 
 
 def _suite(

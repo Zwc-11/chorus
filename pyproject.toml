@@ -1,6 +1,6 @@
 # Project metadata and tool configuration.
 # This is the file Python packaging tools read to install Murmur and its dev tools.
-# The internal package keeps its legacy name `chorus`; the public CLI is `murmur`.
+# The import package and public CLI are both named `murmur`.
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
@@ -47,12 +47,10 @@ agents = [
 ]
 
 [project.scripts]
-murmur = "chorus.cli:app"
-# Legacy alias kept for existing scripts and CI configs.
-chorus = "chorus.cli:app"
+murmur = "murmur.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["chorus"]
+packages = ["murmur"]
 
 [tool.pytest.ini_options]
 addopts = "-s"
@@ -68,7 +66,7 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # Holds an embedded HTML/JS trace viewer as one string literal; its lines are a
 # web asset, not Python to be wrapped at 100 cols.
-"chorus/report/trace_html.py" = ["E501"]
-"chorus/report/fan_html.py" = ["E501"]
-"chorus/report/ui_theme.py" = ["E501"]
-"chorus/report/murmur_workflow_html.py" = ["E501"]
+"murmur/report/trace_html.py" = ["E501"]
+"murmur/report/fan_html.py" = ["E501"]
+"murmur/report/ui_theme.py" = ["E501"]
+"murmur/report/murmur_workflow_html.py" = ["E501"]

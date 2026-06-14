@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from chorus.adapters.models.fake import FakeModel, StochasticFakeModel
-from chorus.adapters.models.ollama import OllamaModel
-from chorus.adapters.models.openai_compatible import OpenAICompatibleModel
-from chorus.core.model_port import (
+from murmur.adapters.models.fake import FakeModel, StochasticFakeModel
+from murmur.adapters.models.ollama import OllamaModel
+from murmur.adapters.models.openai_compatible import OpenAICompatibleModel
+from murmur.core.model_port import (
     ModelOutputError,
     ModelPort,
     ModelPrice,

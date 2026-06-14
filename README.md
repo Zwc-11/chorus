@@ -15,9 +15,8 @@ selection, repair loops, taint-aware tool control, and replayable traces.
 
 **Frontier models buy intelligence. Murmur buys reliability through process.**
 
-> Murmur was previously developed under the codename **Chorus**. The internal
-> Python package is still named `chorus`, and the legacy `chorus` CLI alias
-> still works. Everything user-facing is Murmur.
+> Murmur was previously developed under the codename **Chorus**. The Python
+> package and CLI are now named `murmur`. Everything user-facing is Murmur.
 
 ---
 
@@ -166,7 +165,7 @@ Run tests and lint:
 
 ```bash
 pytest
-ruff check chorus tests
+ruff check murmur tests
 ```
 
 ### Try it

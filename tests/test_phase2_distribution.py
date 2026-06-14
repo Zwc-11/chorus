@@ -9,23 +9,23 @@ from __future__ import annotations
 
 import asyncio
 
-from chorus.adapters.agents.stochastic import (
+from murmur.adapters.agents.stochastic import (
     stochastic_agent_factory,
     stochastic_tools,
 )
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.core.conductor import RunConductor
-from chorus.core.divergence import build_divergence_overlay, group_trajectory_events
-from chorus.core.events import Event, EventType
-from chorus.core.metrics import (
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.core.conductor import RunConductor
+from murmur.core.divergence import build_divergence_overlay, group_trajectory_events
+from murmur.core.events import Event, EventType
+from murmur.core.metrics import (
     pass_hat_k_unbiased,
     reliability_curve,
     reliability_metrics,
     wilson_interval,
 )
-from chorus.core.results import result_from_events
-from chorus.core.types import ReliabilityMetrics, RunResult, TaskSpec, TrajectoryResult
-from chorus.report.fan import render_fan
+from murmur.core.results import result_from_events
+from murmur.core.types import ReliabilityMetrics, RunResult, TaskSpec, TrajectoryResult
+from murmur.report.fan import render_fan
 
 TASK = TaskSpec(
     task_id="demo.echo_uppercase",

@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import asyncio
 
-from chorus.adapters.agents.swe import SwePatchAgent
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.benchmarks.scaffold import run_judged_suite, run_judged_suite_batched
-from chorus.benchmarks.swe.judge import SweBenchJudge
-from chorus.benchmarks.swe.types import ModelResponse, SweOutcome, SwePrediction
-from chorus.core.conductor import RunConductor
-from chorus.core.events import EventType
-from chorus.core.types import TaskSpec
-from chorus.trace.mapper import events_to_traces
+from murmur.adapters.agents.swe import SwePatchAgent
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.benchmarks.scaffold import run_judged_suite, run_judged_suite_batched
+from murmur.benchmarks.swe.judge import SweBenchJudge
+from murmur.benchmarks.swe.types import ModelResponse, SweOutcome, SwePrediction
+from murmur.core.conductor import RunConductor
+from murmur.core.events import EventType
+from murmur.core.types import TaskSpec
+from murmur.trace.mapper import events_to_traces
 
 
 def _run(value):

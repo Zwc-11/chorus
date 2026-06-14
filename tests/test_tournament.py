@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from chorus.adapters.models.fake import FakeModel
-from chorus.application.tournament import (
+from murmur.adapters.models.fake import FakeModel
+from murmur.application.tournament import (
     ObjectiveKey,
     TournamentJudge,
     rank_attempts,
 )
-from chorus.core.model_port import ModelUnavailable
+from murmur.core.model_port import ModelUnavailable
 
 
 @dataclass(frozen=True, slots=True)

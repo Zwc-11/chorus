@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from chorus.benchmarks.loader import load_suite, suite_version_for
-from chorus.benchmarks.swebench import (
+from murmur.benchmarks.loader import load_suite, suite_version_for
+from murmur.benchmarks.swebench import (
     BenchmarkDataUnavailable,
     load_swebench_verified,
     resolve_subset_size,

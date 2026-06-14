@@ -10,12 +10,12 @@ import asyncio
 
 import pytest
 
-from chorus.adapters.agents.fake import FakeAgent, fake_tools
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.core.conductor import RunConductor
-from chorus.core.events import EventType
-from chorus.core.types import TaskSpec
-from chorus.gateway.tool_gateway import ReplayDivergenceError
+from murmur.adapters.agents.fake import FakeAgent, fake_tools
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.core.conductor import RunConductor
+from murmur.core.events import EventType
+from murmur.core.types import TaskSpec
+from murmur.gateway.tool_gateway import ReplayDivergenceError
 
 
 def run_async(value):

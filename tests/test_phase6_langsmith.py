@@ -10,10 +10,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 
-from chorus.adapters.agents.stochastic import stochastic_agent_factory, stochastic_tools
-from chorus.adapters.storage.memory import InMemoryEventStore
-from chorus.adapters.trace.memory import InMemoryTraceCollector
-from chorus.adapters.trace.otlp import (
+from murmur.adapters.agents.stochastic import stochastic_agent_factory, stochastic_tools
+from murmur.adapters.storage.memory import InMemoryEventStore
+from murmur.adapters.trace.memory import InMemoryTraceCollector
+from murmur.adapters.trace.otlp import (
     _BACKEND_DEFAULTS,
     LANGSMITH_APP_URL,
     _CountingSpanExporter,
@@ -23,10 +23,10 @@ from chorus.adapters.trace.otlp import (
     langsmith_attributes,
     langsmith_project_url,
 )
-from chorus.core.conductor import RunConductor
-from chorus.core.types import TaskSpec
-from chorus.trace.emit import emit_traces
-from chorus.trace.mapper import events_to_traces
+from murmur.core.conductor import RunConductor
+from murmur.core.types import TaskSpec
+from murmur.trace.emit import emit_traces
+from murmur.trace.mapper import events_to_traces
 
 TASK = TaskSpec(
     task_id="demo.echo_uppercase",

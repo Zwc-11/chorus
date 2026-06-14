@@ -16,7 +16,7 @@
 
 Done when **all** of these hold:
 
-1. `chorus run … --n 30` reports `pass@1` **with a Wilson CI**, a **`pass^k` decay curve**
+1. `murmur run … --n 30` reports `pass@1` **with a Wilson CI**, a **`pass^k` decay curve**
    (both estimators), variance, cost, latency, and a failure breakdown.
 2. The fan and the metrics are computed from **real recorded trajectories** (the Phase 1
    event log), not the `stochastic` agent's ad-hoc output.
@@ -189,7 +189,7 @@ every displayed number; no prose/titles inside the widget.
 - **All-converged (degenerate):** agreement flat at 100%, no divergence column. This is the
   correct, boring result your original Phase 0 run produced — show it as success, not a bug.
 - **Still running:** columns fill left→right as steps complete; metrics show "provisional."
-- **Empty:** "no runs yet — `chorus run … --n 30`".
+- **Empty:** "no runs yet — `murmur run … --n 30`".
 
 ---
 

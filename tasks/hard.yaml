@@ -6,4 +6,4 @@ metadata:
   difficulty: 0.12
 prompt: |
   Build a complete, production-quality single-page marketing website for Chorus.
-  See chorus/core/agent_tasks.py for the full prompt used by `chorus --task hard`.
+  See murmur/core/agent_tasks.py for the full prompt used by `murmur --task hard`.

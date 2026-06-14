@@ -1,6 +1,8 @@
 # Local files that should not be committed.
 # These are build outputs, caches, virtual environments, and private env files.
 .venv/
+.murmur/
+# Legacy local output directory from pre-rename runs.
 .chorus/
 __pycache__/
 .pytest_cache/

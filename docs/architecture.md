@@ -281,9 +281,9 @@ the honest verdict is neither pass nor fail.
 - **Tracing:** OpenTelemetry SDK (`gen_ai` semconv) → Phoenix (default) / LangSmith.
 - **Storage:** JSONL → SQLite (`aiosqlite`) → Postgres (optional).
 - **Agents under test:** Claude Code, LangGraph, OpenAI Agents SDK (via AgentPort adapters).
-- **CI:** GitHub Actions (composite action wrapping `chorus run`).
+- **CI:** GitHub Actions (composite action wrapping `murmur run`).
 - **Visualizer:** single self-contained HTML/SVG file reading the event log (no app shell).
-- **Packaging:** `pip install chorus`; `chorus run agent.py --n 12 --task tasks/142.yaml`.
+- **Packaging:** `pip install murmur-ai-harness`; `murmur run agent.py --n 12 --task tasks/142.yaml`.
 
 ---
 
@@ -304,7 +304,7 @@ the honest verdict is neither pass nor fail.
 **Phase 2 — Reliability (the distribution + the visual)**
 - Run Conductor fan-out (`N` trajectories), pass^k / variance / Wilson CI / cost / latency.
 - Trajectory-fan Visualizer wired to the event log.
-- **Exit:** `chorus run … --n 12` prints a distribution and renders the fan view.
+- **Exit:** `murmur run … --n 12` prints a distribution and renders the fan view.
 
 **Phase 3 — Judgment (cost-aware cascade)**
 - Tier 0/1/2 cascade; judge-of-judge agreement; escalation FSM.
@@ -329,7 +329,7 @@ the honest verdict is neither pass nor fail.
 ## 10. Suggested repo layout
 
 ```
-chorus/
+murmur/
   core/            # pure domain: conductor, escalation FSM, metrics, contracts
     ports.py       # ModelPort, AgentPort, ToolPort, StoragePort, TracePort, JudgePort
     events.py      # event types + event log

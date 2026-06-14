@@ -12,19 +12,19 @@ from pathlib import Path
 
 import pytest
 
-from chorus.adapters.agents.contract_lite import build_contract_agent
-from chorus.adapters.agents.murmur_patch import (
+from murmur.adapters.agents.contract_lite import build_contract_agent
+from murmur.adapters.agents.murmur_patch import (
     MurmurPatchAgent,
     _extract_patch,
     _extract_paths,
     port_for_provider,
 )
-from chorus.adapters.models.fake import FakeModel
-from chorus.adapters.sandboxes.local_worktree import LocalWorktreeSandbox
-from chorus.adapters.tools.contract_proxy import ContractToolProxy
-from chorus.application.contract_compiler import compile_fix_test_contract
-from chorus.application.event_log import JsonlRunEventLog
-from chorus.domain.policy import BudgetState, PolicyEngine
+from murmur.adapters.models.fake import FakeModel
+from murmur.adapters.sandboxes.local_worktree import LocalWorktreeSandbox
+from murmur.adapters.tools.contract_proxy import ContractToolProxy
+from murmur.application.contract_compiler import compile_fix_test_contract
+from murmur.application.event_log import JsonlRunEventLog
+from murmur.domain.policy import BudgetState, PolicyEngine
 
 COMMAND = "python -m pytest tests/test_checkout.py -q"
 

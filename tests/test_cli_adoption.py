@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from chorus.cli import app
+from murmur.cli import app
 
 
 def test_init_creates_starter_files_without_overwriting(tmp_path) -> None:
@@ -14,8 +14,8 @@ def test_init_creates_starter_files_without_overwriting(tmp_path) -> None:
     second = runner.invoke(app, ["init", "--root", str(tmp_path)])
 
     assert first.exit_code == 0
-    assert (tmp_path / "tasks" / "chorus-smoke.yaml").is_file()
-    assert (tmp_path / ".github" / "workflows" / "chorus.yml").is_file()
+    assert (tmp_path / "tasks" / "murmur-smoke.yaml").is_file()
+    assert (tmp_path / ".github" / "workflows" / "murmur.yml").is_file()
     assert "created" in first.output
     assert second.exit_code == 0
     assert "use --force" in second.output

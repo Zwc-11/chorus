@@ -59,7 +59,7 @@ works.
 
 Already useful:
 
-- `chorus/application/fix_test.py` runs the single-candidate failing-test flow.
+- `murmur/application/fix_test.py` runs the single-candidate failing-test flow.
 - `LocalWorktreeSandbox` already creates an isolated worktree/copy and runs
   subprocess commands.
 - `ContractToolProxy` already enforces policy before tool execution.
@@ -107,7 +107,7 @@ primitives as the contract tool proxy. It is not a shortcut around the contract.
 Keep the domain/application split already in the repo:
 
 ```text
-chorus/domain/workflow.py
+murmur/domain/workflow.py
   WorkflowPlan
   WorkflowNode
   WorkflowEdge
@@ -115,14 +115,14 @@ chorus/domain/workflow.py
   CandidateArtifact
   ExecResult
 
-chorus/application/workflow_runtime.py
+murmur/application/workflow_runtime.py
   WorkflowRuntime
   async DAG scheduler
   per-node event emission
   dependency resolution
   semaphore/concurrency limit
 
-chorus/application/operators/
+murmur/application/operators/
   generate.py
   exec.py
   loop.py
@@ -130,11 +130,11 @@ chorus/application/operators/
   verify.py
   report.py
 
-chorus/application/coding_workflow.py
+murmur/application/coding_workflow.py
   compile_fix_test_workflow(contract, n, max_repairs)
   run_closed_loop_fix_test(...)
 
-chorus/report/closed_loop_md.py
+murmur/report/closed_loop_md.py
   winner summary
   attempt table
   repair trace
@@ -255,7 +255,7 @@ The current `run_fix_test` creates one sandbox for the whole run. Closed-loop
 Murmur needs one sandbox per candidate:
 
 ```text
-.chorus/runs/<run_id>/
+.murmur/runs/<run_id>/
   contract.yaml
   workflow.yaml
   events.jsonl
@@ -346,7 +346,7 @@ generate K candidates -> exec tests -> repair failed candidates -> rank passers 
 
 Done when:
 
-- `chorus fix-test --n 5 --max-repairs 3 ...` works.
+- `murmur fix-test --n 5 --max-repairs 3 ...` works.
 - `--n 1 --max-repairs 0` is equivalent to the old path.
 - failing test output is fed back into the repair prompt.
 - candidates that never pass are kept in the report but excluded from winner
@@ -388,7 +388,7 @@ policy violations.
 Prefer evolving the current command instead of adding a separate public command:
 
 ```bash
-chorus fix-test \
+murmur fix-test \
   --cmd "python -m pytest tests/test_checkout.py -q" \
   --agent chorus-lite \
   --n 5 \
@@ -399,7 +399,7 @@ chorus fix-test \
 Optional dev-only command while building:
 
 ```bash
-chorus workflow run .chorus/workflows/fix-test.yaml
+murmur workflow run .murmur/workflows/fix-test.yaml
 ```
 
 That keeps the public product simple while giving us a way to test the IR.

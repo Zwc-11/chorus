@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from chorus.benchmarks.swe.model import DeepSeekPatchModel
-from chorus.benchmarks.swe.providers import (
+from murmur.benchmarks.swe.model import DeepSeekPatchModel
+from murmur.benchmarks.swe.providers import (
     create_patch_model,
     default_model,
     normalize_provider,
 )
-from chorus.benchmarks.swe.types import BenchDependencyMissing, BenchModelOutputError
+from murmur.benchmarks.swe.types import BenchDependencyMissing, BenchModelOutputError
 
 
 def test_normalize_provider_defaults_to_deepseek(monkeypatch: pytest.MonkeyPatch) -> None:

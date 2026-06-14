@@ -13,11 +13,11 @@
 
 Phase 6 builds **only** on the merged real-agent path, not on new core work:
 
-- `SwePatchAgent` ([chorus/adapters/agents/swe.py](../chorus/adapters/agents/swe.py)) is the
+- `SwePatchAgent` ([murmur/adapters/agents/swe.py](../murmur/adapters/agents/swe.py)) is the
   reference real `AgentPort`: it drives a real `PatchModel` through the gateway, so a real
   run already inherits tracing, replay, divergence, and diagnosis.
 - The conductor takes an injectable `JudgePort`
-  ([chorus/core/conductor.py](../chorus/core/conductor.py)); `SweBenchJudge` runs the real
+  ([murmur/core/conductor.py](../murmur/core/conductor.py)); `SweBenchJudge` runs the real
   tests. Any new agent reuses this seam.
 - The Phase 5 gate + `pass^k` machinery is what turns a real run into a verdict. Do **not**
   re-implement metrics here.
@@ -52,7 +52,7 @@ Done when **all** hold:
 2. A **reliability-cliff report**: a real agent whose `pass@1` looks healthy but whose
    `pass^k` collapses, with the divergence step and per-class failure breakdown that say
    *where* and *why* — rendered from a real run's event log.
-3. The **LangSmith-MCP closed loop** is demonstrated: a Chorus run's trace lands in
+3. The **LangSmith-MCP closed loop** is demonstrated: a murmur run's trace lands in
    LangSmith, a coding agent pulls it via the LangSmith MCP server, and uses it to debug a
    real Chorus bug. Dogfood.
 4. At least one **external artifact**: an upstream reproduction issue (linked) **or** a named
@@ -87,13 +87,13 @@ and the live demo in 3, plus item 4, are Tiers B/C.
    pip-installable, LangSmith-native). The adapter drives the framework's agent for one
    trajectory, records model/tool calls through the gateway exactly like `SwePatchAgent`, and
    returns the final output. Provide a **fake model/graph** for tests so CI needs no network.
-   Optional extra: `pip install "chorus-harness[agents]"`.
-2. **Reliability-cliff report + CLI.** A `chorus cliff` command (or `gate` flag) that runs the
+   Optional extra: `pip install "murmur-ai-harness[agents]"`.
+2. **Reliability-cliff report + CLI.** A `murmur cliff` command (or `gate` flag) that runs the
    real agent ×N on a small real task set and renders the existing fan/overlay/diagnosis
    report, foregrounding the `pass@1` → `pass^k` gap and the divergence step. Default to a
    deterministic fake model so the artifact renders for free; a real model fills in the number.
 3. **LangSmith export, verified.** Confirm the Phase 1 `TracePort` OTLP adapter
-   (`backend="langsmith"`) emits a real Chorus run's `gen_ai.*` spans to LangSmith. Document
+   (`backend="langsmith"`) emits a real murmur run's `gen_ai.*` spans to LangSmith. Document
    the env (`LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`).
 4. **Tests.** Adapter behavior with the fake model; the cliff report renders from a recorded
    log; the gate verdict on a real-agent suite (fakes).
@@ -128,7 +128,7 @@ failures: schema_mismatch ×7, tool_error ×3 <- what breaks, by Phase 4 label
 
 The cliff is the thesis made concrete on someone else's agent: the one-shot number hides a
 distribution Chorus exposes, and the divergence step + failure class say where to look. The
-report reuses [chorus/report/fan_html.py](../chorus/report/fan_html.py) unchanged.
+report reuses [murmur/report/fan_html.py](../murmur/report/fan_html.py) unchanged.
 
 ---
 
@@ -144,7 +144,7 @@ report reuses [chorus/report/fan_html.py](../chorus/report/fan_html.py) unchange
 ## Phase 6 exit checklist
 
 - [ ] One real third-party `AgentPort` adapter, fake-model tested (Tier A).
-- [ ] `chorus cliff` (or `gate` path) renders the reliability-cliff report from a real-agent
+- [ ] `murmur cliff` (or `gate` path) renders the reliability-cliff report from a real-agent
       run; free with a fake model (Tier A).
 - [ ] LangSmith OTLP export verified + documented (Tier A).
 - [ ] Tests green; `ruff` clean (Tier A).

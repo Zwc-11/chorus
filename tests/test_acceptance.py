@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from chorus.core.acceptance import hard_website_accepts, hard_website_diagnostics, repair_feedback
-from chorus.core.agent_tasks import hard_website_task, load_agent_task
+from murmur.core.acceptance import hard_website_accepts, hard_website_diagnostics, repair_feedback
+from murmur.core.agent_tasks import hard_website_task, load_agent_task
 
 
 def test_hard_website_accepts_valid_bundle() -> None:
@@ -48,7 +48,7 @@ def test_load_agent_task_hard_default(monkeypatch) -> None:
 
 
 def test_deepseek_v4_completion_kwargs() -> None:
-    from chorus.benchmarks.swe.model import DeepSeekPatchModel
+    from murmur.benchmarks.swe.model import DeepSeekPatchModel
 
     model = DeepSeekPatchModel(
         model="deepseek-v4-pro",

@@ -8,16 +8,16 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from chorus.adapters.sandboxes.local_worktree import LocalWorktreeSandbox
-from chorus.adapters.tools.contract_proxy import ContractToolProxy
-from chorus.application.contract_compiler import compile_fix_test_contract
-from chorus.application.event_log import JsonlRunEventLog
-from chorus.application.fix_test import compile_fix_test_workflow, validate_fix_test_workflow
-from chorus.cli import app
-from chorus.domain.contract import Contract
-from chorus.domain.policy import BudgetState, PolicyEngine
-from chorus.domain.tool import ToolRequest
-from chorus.domain.workflow import WorkflowNode, WorkflowPlan
+from murmur.adapters.sandboxes.local_worktree import LocalWorktreeSandbox
+from murmur.adapters.tools.contract_proxy import ContractToolProxy
+from murmur.application.contract_compiler import compile_fix_test_contract
+from murmur.application.event_log import JsonlRunEventLog
+from murmur.application.fix_test import compile_fix_test_workflow, validate_fix_test_workflow
+from murmur.cli import app
+from murmur.domain.contract import Contract
+from murmur.domain.policy import BudgetState, PolicyEngine
+from murmur.domain.tool import ToolRequest
+from murmur.domain.workflow import WorkflowNode, WorkflowPlan
 
 
 def test_contract_yaml_roundtrip_and_validation(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_fix_test_scripted_agent_writes_pr_proof(tmp_path: Path) -> None:
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
             "--agent",
             "scripted",
             "--budget",
@@ -104,7 +104,7 @@ def test_fix_test_scripted_agent_writes_pr_proof(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    run_dirs = list((tmp_path / ".chorus" / "runs").glob("run_*"))
+    run_dirs = list((tmp_path / ".murmur" / "runs").glob("run_*"))
     assert len(run_dirs) == 1
     run_dir = run_dirs[0]
     assert (run_dir / "contract.yaml").is_file()
@@ -170,7 +170,7 @@ def test_fix_test_runs_multiple_isolated_attempts(tmp_path: Path) -> None:
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
             "--agent",
             "scripted",
             "--n",
@@ -179,7 +179,7 @@ def test_fix_test_runs_multiple_isolated_attempts(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    run_dir = next((tmp_path / ".chorus" / "runs").glob("run_*"))
+    run_dir = next((tmp_path / ".murmur" / "runs").glob("run_*"))
     attempts = sorted((run_dir / "attempts").glob("attempt_*"))
     assert len(attempts) == 3
     assert (run_dir / "attempts.json").is_file()
@@ -202,14 +202,14 @@ def test_failed_attempt_keeps_exec_output_in_evidence(tmp_path: Path) -> None:
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
             "--agent",
             "scripted",
         ],
     )
 
     assert result.exit_code == 1
-    run_dir = next((tmp_path / ".chorus" / "runs").glob("run_*"))
+    run_dir = next((tmp_path / ".murmur" / "runs").glob("run_*"))
     attempt = json.loads(
         (run_dir / "attempts" / "attempt_1" / "summary.json").read_text(encoding="utf-8")
     )
@@ -224,10 +224,10 @@ def test_tool_proxy_denies_forbidden_exec_command(tmp_path: Path) -> None:
         command="python -m pytest tests/test_checkout.py -q",
         repo_root=tmp_path,
     )
-    sandbox = LocalWorktreeSandbox.create(tmp_path, tmp_path / ".chorus" / "proxy")
+    sandbox = LocalWorktreeSandbox.create(tmp_path, tmp_path / ".murmur" / "proxy")
     budget = BudgetState()
     policy = PolicyEngine(contract, budget)
-    events = JsonlRunEventLog(tmp_path / ".chorus" / "proxy-events.jsonl", run_id="proxy")
+    events = JsonlRunEventLog(tmp_path / ".murmur" / "proxy-events.jsonl", run_id="proxy")
     proxy = ContractToolProxy(sandbox=sandbox, policy=policy, budget=budget, events=events)
 
     result = proxy.call("run_test", {"command": "curl example.com"})
@@ -369,7 +369,7 @@ def test_workflow_run_cli_writes_node_evidence_and_proof(tmp_path: Path) -> None
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
         ],
     )
 
@@ -405,7 +405,7 @@ def test_workflow_run_cli_denies_forbidden_exec_command(tmp_path: Path) -> None:
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
         ],
     )
 
@@ -446,7 +446,7 @@ def test_workflow_run_cli_blocks_tainted_exec_without_policy(tmp_path: Path) -> 
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
         ],
     )
 
@@ -475,7 +475,7 @@ def test_workflow_run_cli_resumes_completed_node_evidence(tmp_path: Path) -> Non
         "--repo-root",
         str(tmp_path),
         "--out-dir",
-        str(tmp_path / ".chorus" / "runs"),
+        str(tmp_path / ".murmur" / "runs"),
         "--run-id",
         "resume_demo",
     ]
@@ -485,7 +485,7 @@ def test_workflow_run_cli_resumes_completed_node_evidence(tmp_path: Path) -> Non
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
-    run_dir = tmp_path / ".chorus" / "runs" / "resume_demo"
+    run_dir = tmp_path / ".murmur" / "runs" / "resume_demo"
     events = [
         json.loads(line)
         for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -583,14 +583,14 @@ def test_failure_not_reproduced_exits_nonzero_with_proof(tmp_path: Path) -> None
             "--repo-root",
             str(tmp_path),
             "--out-dir",
-            str(tmp_path / ".chorus" / "runs"),
+            str(tmp_path / ".murmur" / "runs"),
             "--agent",
             "scripted",
         ],
     )
 
     assert result.exit_code == 1
-    proof = next((tmp_path / ".chorus" / "runs").glob("run_*/proof.md"))
+    proof = next((tmp_path / ".murmur" / "runs").glob("run_*/proof.md"))
     assert "failure_not_reproduced" in proof.read_text(encoding="utf-8")
 
 
